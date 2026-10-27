@@ -1,0 +1,14 @@
+.gradle/
+build/
+.local/
+tools/
+research/
+run/
+*.log
+logs/
+__pycache__/
+*.py[cod]
+
+# Local validation evidence, runtime snapshots and superseded staging copies.
+verification/
+staged/

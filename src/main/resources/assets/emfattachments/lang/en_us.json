@@ -1,0 +1,23 @@
+{
+  "emfattachments.configuration.title": "EMF Attachments Compat",
+  "emfattachments.configuration.accessories": "First-person accessories",
+  "emfattachments.configuration.animation": "Animation and body alignment",
+  "emfattachments.configuration.hideHeadAccessories": "Hide head accessories",
+  "emfattachments.configuration.hideScarves": "Hide scarves near the camera",
+  "emfattachments.configuration.hiddenSlots": "Hidden accessory slots",
+  "emfattachments.configuration.hiddenItems": "Additional hidden items",
+  "emfattachments.configuration.visibleItems": "Always visible items",
+  "emfattachments.configuration.combatCompatibility": "Better Combat compatibility",
+  "emfattachments.configuration.firstPersonBowPose": "Aim bow in first person",
+  "emfattachments.configuration.firstPersonCrossbowPose": "Show crossbow charging in first person",
+  "emfattachments.configuration.separateFirstPersonPoses": "Separate first-person animation state",
+  "emfattachments.configuration.scaleBodyOffset": "Follow player scale",
+  "emfattachments.configuration.downwardBodyClearance": "Look-down body clearance (blocks)",
+  "emfattachments.configuration.combatBodyYOffset": "Crouched combat height (blocks)",
+  "emfattachments.configuration.armPitchMultiplier": "Arm pitch multiplier",
+  "emfattachments.configuration.armPitchOffset": "Arm pitch offset (radians)",
+  "emfattachments.configuration.armPositionX": "Arm outward offset (pixels)",
+  "emfattachments.configuration.armPositionY": "Arm vertical offset (pixels)",
+  "emfattachments.configuration.armPositionZ": "Arm forward offset (pixels)",
+  "emfattachments.configuration.lookUpZShift": "Look-up forward shift (pixels)"
+}

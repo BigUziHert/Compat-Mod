@@ -1,0 +1,75 @@
+plugins {
+    id 'java-library'
+    id 'net.neoforged.moddev' version '2.0.146'
+}
+
+group = 'dev.caleb.emfattachments'
+version = '1.2.7'
+base { archivesName = 'emf-attachments-compat-1.21.1' }
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(21)
+    withSourcesJar()
+}
+repositories {
+    mavenCentral()
+    maven { url = 'https://maven.bawnorton.com/releases' }
+}
+sourceSets {
+    test {
+        compileClasspath += sourceSets.main.compileClasspath
+        runtimeClasspath += sourceSets.main.compileClasspath
+    }
+    testmod {
+        compileClasspath += sourceSets.main.output + sourceSets.main.compileClasspath
+        runtimeClasspath += sourceSets.main.output + sourceSets.main.runtimeClasspath
+    }
+}
+neoForge {
+    version = '21.1.264'
+    mods { emfattachments { sourceSet sourceSets.main } }
+}
+def instanceMods = providers.gradleProperty('instanceMods').orElse('C:/Users/caleb/curseforge/minecraft/Instances/Modded Minecraft/mods')
+// Sable exposes companion types from a nested jar. Extract that API for javac
+// only; Sable remains responsible for supplying it at runtime.
+def sableCompanionApi = layout.buildDirectory.file('optional-api/sable-companion.jar')
+def extractSableCompileApi = tasks.register('extractSableCompileApi') {
+    def sableJars = fileTree(dir: instanceMods.get(), include: ['sable-neoforge-*.jar'])
+    inputs.files(sableJars)
+    outputs.file(sableCompanionApi)
+    doLast {
+        def companion = zipTree(sableJars.singleFile).matching {
+            include 'META-INF/jarjar/sable-companion-common-*.jar'
+        }.singleFile
+        copy {
+            from companion
+            into sableCompanionApi.get().asFile.parentFile
+            rename { 'sable-companion.jar' }
+        }
+    }
+}
+dependencies {
+    compileOnly files(sableCompanionApi).builtBy(extractSableCompileApi)
+    compileOnly 'com.github.bawnorton.mixinsquared:mixinsquared-common:0.3.7'
+    jarJar(implementation('com.github.bawnorton.mixinsquared:mixinsquared-neoforge:0.3.7')) {
+        version { strictly '[0.3.7,)'; prefer '0.3.7' }
+    }
+    compileOnly fileTree(dir: instanceMods.get(), include: ['*.jar', '*.jar.disabled'], exclude: ['fpm_x_compat-*', 'emf-attachments-compat-*'])
+    // Keep optional APIs available to compilation/tests when disabled in the user's pack.
+    if (providers.gradleProperty('firstPersonJar').isPresent()) {
+        compileOnly files(providers.gradleProperty('firstPersonJar').get())
+    }
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8' }
+tasks.named('jar') { from('LICENSE') { into 'META-INF' } }
+tasks.withType(AbstractArchiveTask).configureEach {
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}
+test { useJUnitPlatform() }
+tasks.register('testModJar', Jar) {
+    archiveClassifier = 'test-harness'
+    from sourceSets.testmod.output
+}

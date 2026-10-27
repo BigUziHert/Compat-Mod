@@ -1,0 +1,33 @@
+modLoader="javafml"
+loaderVersion="[4,)"
+license="MIT"
+
+[[mods]]
+modId="emfattachments"
+version="1.2.7"
+displayName="EMF Attachments Compat"
+description='''Keeps Aeronautics goggles, Friends & Foes totems, Deep Aether scarves and Bumblezone flower headwear attached to the EMF animated player. Adds configurable FirstPerson accessory hiding, Better Combat integration and scaled body offsets without FPM x Compat.'''
+
+[[mixins]]
+config="emfattachments.mixins.json"
+
+[[dependencies.emfattachments]]
+modId="neoforge"
+type="required"
+versionRange="[21.1.200,)"
+ordering="NONE"
+side="CLIENT"
+
+[[dependencies.emfattachments]]
+modId="minecraft"
+type="required"
+versionRange="[1.21.1,1.21.2)"
+ordering="NONE"
+side="CLIENT"
+
+[[dependencies.emfattachments]]
+modId="entity_model_features"
+type="required"
+versionRange="[3.3.12,)"
+ordering="AFTER"
+side="CLIENT"

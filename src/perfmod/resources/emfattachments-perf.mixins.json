@@ -1,0 +1,12 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "dev.caleb.emfattachments.perf.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "PerfPlayerRenderMixin",
+    "PerfEntityTickMixin",
+    "PerfAccessoryRenderMixin"
+  ],
+  "injectors": {"defaultRequire": 1}
+}
