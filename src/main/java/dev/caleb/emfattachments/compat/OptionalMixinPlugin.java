@@ -2,6 +2,7 @@ package dev.caleb.emfattachments.compat;
 
 import java.util.List;
 import java.util.Set;
+import java.util.function.Predicate;
 import net.neoforged.fml.loading.FMLLoader;
 import org.objectweb.asm.tree.ClassNode;
 import org.spongepowered.asm.mixin.extensibility.IMixinConfigPlugin;
@@ -9,6 +10,16 @@ import org.spongepowered.asm.mixin.extensibility.IMixinInfo;
 
 /** Checks discovered mod metadata without loading optional classes during mixin discovery. */
 public final class OptionalMixinPlugin implements IMixinConfigPlugin {
+    private final Predicate<String> discoveredMods;
+
+    public OptionalMixinPlugin() {
+        this(OptionalMixinPlugin::discoveredModPresent);
+    }
+
+    OptionalMixinPlugin(Predicate<String> discoveredMods) {
+        this.discoveredMods = discoveredMods;
+    }
+
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
         if (Boolean.getBoolean("emfattachments.disable")) {
@@ -138,7 +149,11 @@ public final class OptionalMixinPlugin implements IMixinConfigPlugin {
         return true;
     }
 
-    private static boolean modPresent(String modId) {
+    private boolean modPresent(String modId) {
+        return discoveredMods.test(modId);
+    }
+
+    private static boolean discoveredModPresent(String modId) {
         // ModLauncher cannot supply untransformed class nodes here. Reading its
         // completed discovery metadata avoids both that unsupported API and
         // recursive transformation of the very class to which this mixin applies.

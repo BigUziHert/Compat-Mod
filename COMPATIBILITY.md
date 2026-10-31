@@ -1,6 +1,6 @@
 # FirstPerson compatibility replacement
 
-Version 1.2.7 extends the FPM x Compat replacement introduced in 1.1.0 for this Minecraft 1.21.1 / NeoForge instance. FirstPerson is optional; installation preserves its current presence or absence. The replacement neither bundles nor calls FPM x Compat, and the installer removes that companion from the instance's mods directory.
+Version 1.2.8 extends the FPM x Compat replacement introduced in 1.1.0 for this Minecraft 1.21.1 / NeoForge instance. EMF, ETF and FirstPerson are optional; installation preserves their current presence or absence. Independent corrections remain active without EMF/ETF, while EMF animation fixes require EMF 3.3.12 or newer and its own compatible ETF dependency. EMF bridge mods may still require EMF and must be disabled or removed separately when removing it. The replacement neither bundles nor calls FPM x Compat, and the installer removes that companion from the instance's mods directory.
 
 ## Reported problems and implementation
 
@@ -74,7 +74,7 @@ Open **Mods → EMF Attachments Compat → Config**. Settings are client-side an
 
 ## Scope
 
-The installed pack includes Better Combat, Combat Roll, Not Enough Animations and their existing EMF bridges. The replacement respects FirstPerson activation handlers and yields during Combat Roll; those existing animation bridges remain installed.
+The integrations support Better Combat, Combat Roll and Not Enough Animations. With EMF installed, the relevant EMF bridges enable the EMF/NEA pose corrections. Without EMF, those integrations stay inactive and the other corrections retain their own mod-presence checks. The replacement respects FirstPerson activation handlers and yields during Combat Roll.
 
 Comments also request other game versions or integrations with Essential, Punchy, Spell Engine, Relics, Werewolf and gun/cinematic mods. Those absent mods are not certified by this build. Vanilla attribute scaling is covered separately from Pehkui-specific scaling. See [TESTING.md](TESTING.md) for exact runtime evidence and limits; historical 1.0.0 results used the now-removed companion and do not establish replacement behavior.
 

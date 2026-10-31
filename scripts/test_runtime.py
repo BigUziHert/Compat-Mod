@@ -17,7 +17,7 @@ INSTANCE = Path('C:/Users/caleb/curseforge/minecraft/Instances/Modded Minecraft'
 INSTALL = Path('C:/Users/caleb/curseforge/minecraft/Install')
 RUNTIME = ROOT / '.local/client'
 VERSION = 'neoforge-21.1.264'
-MOD_VERSION = '1.2.7'
+MOD_VERSION = '1.2.8'
 
 
 def sync_emf_hand_setting(source, target):

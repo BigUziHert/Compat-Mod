@@ -2,7 +2,9 @@
 
 A compatibility mod for Minecraft 1.21.1 / NeoForge, built against the installed EMF 3.3.12 and Fresh Animations Player Extension 1.1 setup. Most integrations affect client rendering; the optional Cataclysm grapple correction runs with the server's native motion handling.
 
-Version **1.2.7** corrects sleeping-player alignment on rotated Sable beds and extends head-accessory hiding to the native first-person sleeping view, with or without FirstPerson. The earlier native-hand, Aether glove and Entity Culling corrections are retained. [TESTING.md](TESTING.md) separates current checks from historical equipment and weapon replays. On October 27 the user also confirmed that 1.2.6 resolved their idle/third-person shrinking glove symptom; the isolated tests did not reproduce that separate symptom. These tests do not certify every possible scenario. FPM x Compat is not used.
+Version **1.2.8** makes EMF and ETF optional. Independent accessory, FirstPerson, Better Combat and Sable corrections remain available when both are absent; EMF-specific animation integrations activate only when EMF is installed. If installed, EMF must be 3.3.12 or newer and still requires its own compatible ETF version. Other mods' EMF dependencies are unchanged.
+
+The sleeping-player alignment and native first-person sleeping accessory fixes from 1.2.7 are retained, along with the earlier native-hand, Aether glove and Entity Culling corrections. [TESTING.md](TESTING.md) separates current checks from historical equipment and weapon replays. On October 27 the user also confirmed that 1.2.6 resolved their idle/third-person shrinking glove symptom; the isolated tests did not reproduce that separate symptom. These tests do not certify every possible scenario. FPM x Compat is not used.
 
 ## Corrections
 
@@ -55,9 +57,20 @@ $env:JAVA_HOME = 'C:\Program Files\Java\jdk-21'
 
 The build reads compile-only mod dependencies from the existing instance's `mods` folder. For another instance, supply `-PinstanceMods=C:/path/to/mods`. If FirstPerson is absent there, supply `-PfirstPersonJar=C:/path/to/firstperson.jar` for compilation and tests only. Those installed mod jars are not bundled. MixinSquared 0.3.7 is included as a nested dependency for the narrow FirstPerson and Entity Culling handler integrations.
 
-The production artifact is `build/libs/emf-attachments-compat-1.21.1-1.2.7.jar`. The separate `test-harness` jar is for development only and must not be installed for ordinary play. Sable's nested companion API is extracted for compilation only and is not bundled in the production artifact.
+The production artifact is `build/libs/emf-attachments-compat-1.21.1-1.2.8.jar`. The separate `test-harness` jar is for development only and must not be installed for ordinary play. Sable's nested companion API is extracted for compilation only and is not bundled in the production artifact.
 
 ## Reproduce the runtime tests
+
+For the optional-dependency smoke test, `scripts/check_optional_runtime.py` prepares a separate client and a small probe without EMF API references. It uses an existing disposable `AttachmentTest` world, equips native accessories, captures four first/third-person views and stops the client. This checks loading and rendering; it does not certify every gameplay or visual-alignment scenario. Use a fresh label for each preparation:
+
+```powershell
+python scripts/check_optional_runtime.py prepare --label absent-check
+python scripts/check_optional_runtime.py launch --label absent-check
+# After the client exits:
+python scripts/check_optional_runtime.py collect --label absent-check
+```
+
+Add `--emf` to `prepare` to include EMF, ETF and the installed EMF bridges in that disposable copy, or `--firstperson C:/path/to/firstperson.jar` to include FirstPerson. The older full developer harness below targets the EMF animation setup and is not the absence test.
 
 `scripts/test_runtime.py` creates an isolated client under `.local/client`, using copies of the installed mods/config/resourcepacks/shaders and existing local Minecraft/NeoForge launcher libraries. It uses an offline development identity and never connects to the user's multiplayer server. Existing user saves and account credentials are not copied.
 

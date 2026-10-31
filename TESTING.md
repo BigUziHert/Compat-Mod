@@ -1,4 +1,14 @@
-# Version 1.2.7 verification record
+# Version 1.2.8 verification record
+
+EMF is now an optional runtime dependency, with the existing 3.3.12 minimum retained when installed. This mod has no direct ETF dependency; EMF itself still requires a compatible ETF version. Independent fixes retain their original mod-presence checks, and the EMF integrations remain gated on EMF discovery.
+
+The production build passes **95 unit tests**, including three new optional-dependency regressions. These inspect the actual metadata, traverse compiled production class references from all registered mixins and the entrypoint, and check that EMF-dependent hooks are skipped while independent fixes stay available with FirstPerson present or absent. The plugin's constructor seam changes only how the tests supply discovered mod IDs; production still reads NeoForge's discovered mod metadata. [Build evidence](verification/build-1.2.8.json).
+
+Three fresh offline clients pass the [optional-dependency smoke checks](verification/optional-emf-1.2.8/REPORT.md): EMF/ETF absent, EMF/ETF present, and EMF/ETF absent with FirstPerson present. The same production bytes render 3,587 world frames across twelve camera views, with all twelve original screenshots reviewed. Native Warden helmet, Night Vision Goggles and Cross Necklace are equipped and synchronized. Each client shuts down normally with no crash report or failed event handler. These are loading/rendering smoke checks, not a full gameplay replay or FPS comparison; the user's disabled Fresh Player pack remains disabled, so the EMF-present run does not reverify Fresh Player animations. Other mods retain nonfatal pack diagnostics, including Supplementaries' optional missing-EMF class warning in absent runs.
+
+[Installation verification](verification/optional-emf-1.2.8/installation.json) confirms the installed 1.2.8 jar matches all three tested copies. Only our production jar changed; all other mod files, user configuration and options retain their previous bytes. EMF and ETF remain disabled and FirstPerson remains absent. The previous 1.2.7 jar is backed up under `.local/installation-backup-20261031-082635/`. Restart Minecraft to load the update.
+
+## Historical version 1.2.7 verification
 
 The focused sleeping-bed comparison is recorded in [the 1.2.7 report](verification/sleeping-1.2.7/REPORT.md). Its separate developer trigger is `emfattachments-sable-sleep.txt`, containing a run label. It uses real Sable plot beds, native server sleep, body-orientation witnesses and actual accessory vertex counts, with original screenshots for visual review.
 
