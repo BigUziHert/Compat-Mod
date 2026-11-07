@@ -17,7 +17,7 @@ INSTANCE = Path('C:/Users/caleb/curseforge/minecraft/Instances/Modded Minecraft'
 INSTALL = Path('C:/Users/caleb/curseforge/minecraft/Install')
 RUNTIME = ROOT / '.local/client'
 VERSION = 'neoforge-21.1.264'
-MOD_VERSION = '1.2.8'
+MOD_VERSION = '1.2.10'
 
 
 def sync_emf_hand_setting(source, target):
@@ -133,7 +133,7 @@ def allowed(rules):
     return allow
 
 
-def launch(baseline=False, auto_sweep=True):
+def launch(baseline=False, auto_sweep=True, extra_jvm=()):
     vanilla = json.loads((INSTALL / 'versions/1.21.1/1.21.1.json').read_text())
     neo = json.loads((INSTALL / f'versions/{VERSION}/{VERSION}.json').read_text())
     libraries = {}
@@ -179,7 +179,7 @@ def launch(baseline=False, auto_sweep=True):
                 result.append(value)
         return result
 
-    args = ['-Xms1G', '-Xmx8G']
+    args = ['-Xms1G', '-Xmx8G', *extra_jvm]
     if auto_sweep:
         args.append('-Demfattachments.test=true')
     if baseline:

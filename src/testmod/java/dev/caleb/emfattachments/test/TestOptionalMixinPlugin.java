@@ -13,6 +13,15 @@ public final class TestOptionalMixinPlugin implements IMixinConfigPlugin {
         return FMLLoader.getLoadingModList().getModFileById(id) != null;
     }
     @Override public boolean shouldApplyMixin(String target, String mixin) {
+        if (Boolean.getBoolean("emfattachments.artificeOnly") && !mixin.contains("Artifice")
+                && !mixin.contains("NativeHandAccessory")) return mixin.endsWith(".NativeWorldReadinessMixin");
+        if (mixin.contains("ArtificeBodyMask")) return loaded("emfattachments") && loaded("firstperson") && loaded("irons_artifice");
+        if (mixin.contains("ArtificeBodyGeometry")) return loaded("emfattachments") && loaded("firstperson") && loaded("irons_artifice")
+                && (!mixin.contains("Emf")||loaded("entity_model_features"));
+        if (mixin.contains("ArtificeEmf")) return loaded("irons_artifice") && loaded("entity_model_features");
+        if (mixin.contains("ArtificeRagdoll")) return loaded("sable_player_ragdoll") && loaded("accessories") && loaded("curios");
+        if (mixin.contains("ArtificeWearable")) return loaded("accessories");
+        if (mixin.contains("Artifice")) return loaded("irons_artifice");
         if (mixin.contains("SableSleep")) return loaded("sable") && loaded("artifacts") && loaded("accessories");
         if (mixin.contains("NativeAetherHand")) return loaded("aether") && loaded("accessories") && loaded("entity_model_features");
         if (mixin.contains("NativeHands")) return loaded("entity_model_features");

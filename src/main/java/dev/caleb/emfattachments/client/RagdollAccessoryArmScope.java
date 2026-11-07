@@ -2,6 +2,9 @@ package dev.caleb.emfattachments.client;
 
 import dev.leo.sableplayerragdoll.block.entity.RagdollPartBlockEntity;
 import dev.leo.sableplayerragdoll.neoforge.client.RagdollPartBlockEntityRenderer;
+import java.util.List;
+import net.minecraft.client.model.HumanoidModel;
+import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.world.entity.HumanoidArm;
 
 /** The actual physical arm for one Sable accessory call, not an inferred slot parity. */
@@ -31,6 +34,13 @@ public final class RagdollAccessoryArmScope implements AutoCloseable {
     public static boolean hides(HumanoidArm selectedArm) {
         RagdollAccessoryArmScope current = CURRENT.get();
         return current != null && current.arm != null && selectedArm != null && current.arm != selectedArm;
+    }
+
+    /** Paired glove models share one draw for both arms; keep only this physical part. */
+    public static Iterable<ModelPart> visibleGloveArms(HumanoidModel<?> model, Iterable<ModelPart> nativeParts) {
+        if (hides(HumanoidArm.LEFT)) return List.of(model.rightArm);
+        if (hides(HumanoidArm.RIGHT)) return List.of(model.leftArm);
+        return nativeParts;
     }
 
     @Override public void close() {

@@ -80,27 +80,40 @@ class RagdollAccessoryVisibilityTest {
             }
             for (BodyPart physical : BodyPart.values()) {
                 assertEquals(physical == BodyPart.HEAD,
-                        RagdollAccessoryVisibility.routeHeadSlot(canonical, physical, nativeCuriosPart(slot, physical)),
+                        RagdollAccessoryVisibility.routeCanonicalSlot(canonical, physical, nativeCuriosPart(slot, physical)),
                         slot + " / " + physical);
             }
         }
     }
 
-    @Test void nativeFeetAndArmRoutingRemainExactlyUnchanged() throws Exception {
+    @Test void namespacedAndUnknownGloveSlotsDrawOnArmsInsteadOfAnExtraPairOnTheTorso() throws Exception {
+        for (String slot : List.of("aether:gloves_slot", "bracelet", "wrist", "custom:gloves_slot")) {
+            Set<BodyPart> canonical = nativeAccessoriesParts(CuriosConversionUtils.slotConvertToA(slot));
+            assertEquals(Set.of(BodyPart.LEFT_ARM, BodyPart.RIGHT_ARM), canonical, slot);
+            assertTrue(nativeCuriosPart(slot, BodyPart.TORSO), "Reproduce the native torso fallback that emitted an extra pair");
+            for (BodyPart physical : BodyPart.values()) {
+                assertEquals(physical == BodyPart.LEFT_ARM || physical == BodyPart.RIGHT_ARM,
+                        RagdollAccessoryVisibility.routeCanonicalSlot(canonical, physical, nativeCuriosPart(slot, physical)),
+                        slot + " / " + physical);
+            }
+        }
+    }
+
+    @Test void nativeFeetKnownArmAndTorsoRoutingRemainExactlyUnchanged() throws Exception {
         assertEquals(Set.of(BodyPart.LEFT_LEG, BodyPart.RIGHT_LEG), nativeAccessoriesParts("shoes"));
         assertFalse(nativeCuriosPart("feet", BodyPart.LEFT_LEG));
         assertTrue(nativeCuriosPart("feet", BodyPart.RIGHT_LEG));
-        for (String slot : List.of("feet", "ring", "hands", "bracelet", "wrist", "necklace", "unknown_slot")) {
+        for (String slot : List.of("feet", "ring", "hands", "necklace", "unknown_slot")) {
             Set<BodyPart> canonical = nativeAccessoriesParts(CuriosConversionUtils.slotConvertToA(slot));
             for (BodyPart physical : BodyPart.values()) {
                 boolean original = nativeCuriosPart(slot, physical);
-                assertEquals(original, RagdollAccessoryVisibility.routeHeadSlot(canonical, physical, original),
-                        "Do not broaden installed non-head routing: " + slot + " / " + physical);
+                assertEquals(original, RagdollAccessoryVisibility.routeCanonicalSlot(canonical, physical, original),
+                        "Keep already-correct native routing: " + slot + " / " + physical);
             }
         }
         for (BodyPart physical : BodyPart.values()) {
-            assertFalse(RagdollAccessoryVisibility.routeHeadSlot(Set.of(BodyPart.HEAD, BodyPart.TORSO), physical, false));
-            assertTrue(RagdollAccessoryVisibility.routeHeadSlot(Set.of(BodyPart.HEAD, BodyPart.TORSO), physical, true));
+            assertFalse(RagdollAccessoryVisibility.routeCanonicalSlot(Set.of(BodyPart.HEAD, BodyPart.TORSO), physical, false));
+            assertTrue(RagdollAccessoryVisibility.routeCanonicalSlot(Set.of(BodyPart.HEAD, BodyPart.TORSO), physical, true));
         }
     }
 

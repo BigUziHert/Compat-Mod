@@ -22,9 +22,9 @@ import top.theillusivec4.curios.api.client.ICurioRenderer;
 @Mixin(targets = "dev.leo.sableplayerragdoll.neoforge.client.CuriosRenderHelper", remap = false)
 public abstract class RagdollCuriosDedupMixin {
     @Inject(method = "slotBelongsToPart", at = @At("RETURN"), cancellable = true, require = 1)
-    private static void emfattachments$canonicalHeadSlot(String slot, BodyPart bodyPart, CallbackInfoReturnable<Boolean> result) {
+    private static void emfattachments$canonicalHeadAndArmSlot(String slot, BodyPart bodyPart, CallbackInfoReturnable<Boolean> result) {
         String canonical = CuriosConversionUtils.slotConvertToA(slot);
-        result.setReturnValue(RagdollAccessoryVisibility.routeHeadSlot(
+        result.setReturnValue(RagdollAccessoryVisibility.routeCanonicalSlot(
                 RagdollAccessoriesSlotRouting.resolveSlot(canonical), bodyPart, result.getReturnValue()));
     }
 

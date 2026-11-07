@@ -16,11 +16,15 @@ public final class AccessoryVisibilityPolicy {
             "aeronautics:aviators_goggles", "the_bumblezone:flower_headwear");
     private AccessoryVisibilityPolicy() {}
 
+    public static boolean isHeadModel(String itemId) {
+        return containsId(HEAD_MODELS, itemId);
+    }
+
     public static boolean shouldHide(String slotName, String itemId, boolean hideHeads,
             boolean hideScarves, List<? extends String> hiddenSlots,
             List<? extends String> hiddenItems, List<? extends String> visibleItems) {
         if (containsId(visibleItems, itemId)) return false;
-        return containsId(hiddenItems, itemId) || (hideHeads && (matchesSlot(slotName, hiddenSlots) || containsId(HEAD_MODELS, itemId)))
+        return containsId(hiddenItems, itemId) || (hideHeads && (matchesSlot(slotName, hiddenSlots) || isHeadModel(itemId)))
                 || (hideScarves && containsId(SCARVES, itemId));
     }
 

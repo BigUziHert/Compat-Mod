@@ -48,6 +48,15 @@ public final class AttachmentTestMod {
     public static TestResult current;
 
     public AttachmentTestMod() {
+        if (Boolean.getBoolean("emfattachments.artificeOnly")) {
+            NativeWorldReadiness.register();
+            ArtificeLifecycleSequence.register();
+            NeoForge.EVENT_BUS.addListener(AttachmentTestMod::tick);
+            return;
+        }
+        if (net.neoforged.fml.ModList.get().isLoaded("irons_artifice")
+                && net.neoforged.fml.ModList.get().isLoaded("accessories")
+                && net.neoforged.fml.ModList.get().isLoaded("combat_roll")) ArtificeLifecycleSequence.register();
         NativeWorldReadiness.register();
         GlErrorTraceProbe.register();
         if (net.neoforged.fml.ModList.get().isLoaded("sable")

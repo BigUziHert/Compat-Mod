@@ -1,4 +1,47 @@
-# Version 1.2.8 verification record
+# Version 1.2.10 verification record
+
+The six-shooter uses the gun hand for reload and fire in both views. The build passes 138 unit tests. Sixteen in-game scenarios cover both dominant hands, first and third person, sprint reload, recoil, ammunition and projectile spawning. The flintlock and musket serve as two-hand reload controls. The same production jar passed with FirstPerson, EMF and Fresh Player enabled and with those rendering mods and packs removed. [Screenshots and verification](verification/artifice-1.2.10/REPORT.md)
+
+# Historical version 1.2.9 verification record
+
+Iron's Arms 'n Artifice compatibility and the reported ragdoll accessory duplicates are covered by the [focused verification report](verification/artifice-1.2.9/REPORT.md). All gameplay runs use disposable clients and an offline integrated-server world under this repository's `.local/artifice-1.2.9/` directory. The supplied CurseForge instance is read only for mod jars; no installation, configuration change or world change is made there.
+
+The production build passes **133 unit tests**, with zero failures, errors or skips. [Build evidence](verification/artifice-1.2.9/build.json) binds the compiled jar and test results. Checks include actual optional API signatures, accessory transform/visibility restoration, native gun pose selection, head/paired-arm routing, nested geometry masks and optional-class loading without Iron/Better Combat/PlayerAnimator APIs.
+
+The matrix covers all seven installed guns, first-person and front/rear third-person views, left-handed use, hidden and cosmetic accessories, walking, sprinting, crouching, reloads, sprinting during reload, Combat Roll and native ragdoll recovery, firing with server ammunition/projectile witnesses, and switching away/back. Focused ragdoll cases cover Whoopee Cushion in face and flexible anklet slots, hidden and cosmetic-only headwear, Snorkel replacement, running-shoes controls, Aether/Skyjade gloves, Onion Ring, paired claws and cosmetic Fire Gauntlet. Native gun comparisons omit this compatibility jar, EMF/ETF, optional animation mods and custom resource packs. FirstPerson is also tested with EMF present and absent, including straight-down views; the report distinguishes rejected candidates from accepted checks.
+
+## Running the Artifice checks on the current version
+
+Build with Java 21 and the optional FirstPerson API jar supplied through `-PfirstPersonJar=<absolute path>`:
+
+```powershell
+.\gradlew.bat build testModJar '-PfirstPersonJar=C:/path/to/firstperson-neoforge-2.7.3-mc1.21.1.jar'
+python scripts/run_artifice_tests.py prepare --label example --firstperson C:/path/to/firstperson-neoforge-2.7.3-mc1.21.1.jar
+Set-Content -LiteralPath '.local/artifice-1.2.10/example/.local/client/emfattachments-artifice-lifecycle.txt' -Value 'example' -Encoding ascii
+python scripts/run_artifice_tests.py launch --label example
+```
+
+Preparation requires the existing disposable `.local/client` fixture and creates a new directory for every process. Omit `--firstperson` for the source mod list without FirstPerson; use `--no-emf` to omit EMF/ETF/EMF bridges and custom packs, or `--native-reference` for the native comparison without this compatibility jar and the listed optional animation mods. Do not point the fixture at the supplied CurseForge instance. The launcher uses `emfattachments.artificeOnly=true` to isolate these current probes from older developer sequences targeting earlier Sable APIs.
+
+The trigger contains a unique report label followed optionally by `quick` (four pistol/rifle camera contexts), `cushion` (twelve focused ragdoll contexts), `down` (two first-person contexts at 90 degrees), `free` (thirteen pistol free-arm and control contexts), or `freecontrols` (two extra free-hand accessory contexts). No suffix runs the full 24-context gun matrix. Wait for `finished: true` in `emfattachments-tests/<report-label>/artifice-lifecycle-report.json`, then write `emfattachments-stop.txt` in that disposable client and collect after its normal shutdown:
+
+```powershell
+Set-Content -LiteralPath '.local/artifice-1.2.10/example/.local/client/emfattachments-stop.txt' -Value 'completed' -Encoding ascii
+python scripts/run_artifice_tests.py collect --label example
+python scripts/verify_artifice_tests.py verification/artifice-1.2.10/example/emfattachments-tests/example/artifice-lifecycle-report.json --fixed --output verification/artifice-1.2.10/example/checked-summary.json
+```
+
+For the pistol free arm, run both `free` and `freecontrols` for the same graphics setup, validate each with the lifecycle verifier above, then combine their reports:
+
+```powershell
+python scripts/verify_artifice_body_hands.py <free-report.json> --mask ownership --supplement <freecontrols-report.json> --output <body-checks.json>
+```
+
+The check compares physical gun hands with actual arm geometry and each hand's selected accessory. The flintlock gives the free arm to Iron during its two-handed reload; the six-shooter keeps it throughout its one-handed reload. The main fixture covers ordinary and steep-down views, both dominant hands, rifle, empty-hand and third-person controls. Artifacts' hand slot 0 follows the dominant hand. The supplemental fixture therefore hides or cosmetically replaces the item in slot 1 to test the free arm specifically. `--mask expected` is the historical all-hidden arm check, and `--mask observe` records offscreen geometry; neither establishes the free-arm requirement.
+
+Omit `--fixed` when validating native/baseline gameplay. The lifecycle verifier is not the focused `cushion` verifier; those records need their physical-part vertex and image review. A raw `CAPTURED` status or passing gameplay assertions does not establish visual alignment: the straight-down FirstPerson regression was found by reviewing original images after the numerical checks passed. Evidence includes the production/harness hashes, actual runtime mod list, reports, original captures and unchanged-source-mod checks. These are functional single-player tests, not remote multiplayer or FPS certification.
+
+## Historical version 1.2.8 verification
 
 EMF is now an optional runtime dependency, with the existing 3.3.12 minimum retained when installed. This mod has no direct ETF dependency; EMF itself still requires a compatible ETF version. Independent fixes retain their original mod-presence checks, and the EMF integrations remain gated on EMF discovery.
 

@@ -13,6 +13,7 @@ import top.theillusivec4.curios.api.SlotContext;
 
 /** Stored Sable stacks omit the eye toggle; consult the actual online owner's slot. */
 public final class RagdollAccessoryVisibility {
+    private static final Set<BodyPart> BOTH_ARMS = Set.of(BodyPart.LEFT_ARM, BodyPart.RIGHT_ARM);
     private RagdollAccessoryVisibility() {}
 
     public static boolean shouldRenderStored(AccessoryRenderer renderer, SlotReference reference) {
@@ -47,9 +48,14 @@ public final class RagdollAccessoryVisibility {
         return option == null || renderer.shouldRender(option);
     }
 
-    /** Keep native limb routing (notably Curios' single feet draw) unchanged. */
-    public static boolean routeHeadSlot(Set<BodyPart> canonicalParts, BodyPart physicalPart, boolean nativeResult) {
-        return canonicalParts.size() == 1 && canonicalParts.contains(BodyPart.HEAD)
-                ? physicalPart == BodyPart.HEAD : nativeResult;
+    /** Correct unknown bridged head/hand slots while keeping Curios' single feet draw. */
+    public static boolean routeCanonicalSlot(Set<BodyPart> canonicalParts, BodyPart physicalPart, boolean nativeResult) {
+        if (canonicalParts.size() == 1 && canonicalParts.contains(BodyPart.HEAD)) {
+            return physicalPart == BodyPart.HEAD;
+        }
+        // Namespaced glove slots otherwise fall back to the torso in Curios.
+        // The per-part ledger cannot suppress that extra pair after Accessories
+        // already drew one glove on each arm; route both paths to the same parts.
+        return canonicalParts.equals(BOTH_ARMS) ? BOTH_ARMS.contains(physicalPart) : nativeResult;
     }
 }

@@ -761,7 +761,7 @@ public final class ExpandedMovementSequence {
             if (freelook && !freeTurned) {
                 double sensitivity = mc.options.sensitivity().get() * .6 + .2;
                 double factor = sensitivity * sensitivity * sensitivity * 8 * .15;
-                if (!com.caleb.unlockedcamera.client.UnlockedCameraClient.freelookMouseTurn(stage.freeYaw / factor, stage.freePitch / factor, 1.0 / 60))
+                if (!com.caleb.unlockedcamera.client.UnlockedCameraClient.freelookMouseTurn(stage.freeYaw / factor, stage.freePitch / factor))
                     throw new IllegalStateException("Native freelook input was not consumed");
                 freeTurned = true;
             }

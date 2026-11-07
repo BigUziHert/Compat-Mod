@@ -2,8 +2,10 @@ package dev.caleb.emfattachments.compat;
 
 import java.util.List;
 import java.util.Set;
+import java.util.function.BiPredicate;
 import java.util.function.Predicate;
 import net.neoforged.fml.loading.FMLLoader;
+import org.apache.maven.artifact.versioning.DefaultArtifactVersion;
 import org.objectweb.asm.tree.ClassNode;
 import org.spongepowered.asm.mixin.extensibility.IMixinConfigPlugin;
 import org.spongepowered.asm.mixin.extensibility.IMixinInfo;
@@ -11,19 +13,55 @@ import org.spongepowered.asm.mixin.extensibility.IMixinInfo;
 /** Checks discovered mod metadata without loading optional classes during mixin discovery. */
 public final class OptionalMixinPlugin implements IMixinConfigPlugin {
     private final Predicate<String> discoveredMods;
+    private final BiPredicate<String, String> versionAtLeast;
 
     public OptionalMixinPlugin() {
-        this(OptionalMixinPlugin::discoveredModPresent);
+        this(OptionalMixinPlugin::discoveredModPresent, OptionalMixinPlugin::discoveredVersionAtLeast);
     }
 
     OptionalMixinPlugin(Predicate<String> discoveredMods) {
+        this(discoveredMods, (mod, minimum) -> true);
+    }
+
+    OptionalMixinPlugin(Predicate<String> discoveredMods, BiPredicate<String, String> versionAtLeast) {
         this.discoveredMods = discoveredMods;
+        this.versionAtLeast = versionAtLeast;
     }
 
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
         if (Boolean.getBoolean("emfattachments.disable")) {
             return false;
+        }
+        if (mixinClassName.endsWith(".RagdollHeadwearRoutingMixin")
+                || mixinClassName.endsWith(".RagdollCuriosHeadwearRoutingMixin")) {
+            return modPresent("sable_player_ragdoll") && modPresent("accessories")
+                    && modPresent("curios") && modPresent("accessories_compat_layer")
+                    && versionAtLeast.test("sable_player_ragdoll", "0.7.5");
+        }
+        if (mixinClassName.endsWith(".ArtificeFirstPersonAccessoriesMixin")) {
+            return modPresent("irons_artifice") && modPresent("accessories");
+        }
+        if (mixinClassName.endsWith(".ArtificeSixShooterGunHandMixin")
+                || mixinClassName.endsWith(".ArtificeSixShooterOffhandMixin")) {
+            return modPresent("irons_artifice");
+        }
+        if (mixinClassName.endsWith(".ArtificeFirstPersonHandsMixin")
+                || mixinClassName.endsWith(".ArtificeFirstPersonFreeArmMixin")) {
+            return modPresent("irons_artifice") && modPresent("firstperson");
+        }
+        if (mixinClassName.endsWith(".ArtificeEmfGunPoseMixin")) {
+            return modPresent("irons_artifice") && modPresent("entity_model_features");
+        }
+        if (mixinClassName.endsWith(".ArtificeSixShooterReloadMixin")) {
+            return modPresent("irons_artifice");
+        }
+        if (mixinClassName.endsWith(".ArtificeArtifactsFirstPersonPoseMixin")) {
+            return modPresent("irons_artifice") && modPresent("accessories") && modPresent("artifacts");
+        }
+        if (mixinClassName.endsWith(".ArtificeSkyjadeFirstPersonPoseMixin")) {
+            return modPresent("irons_artifice") && modPresent("accessories")
+                    && modPresent("aether") && modPresent("deep_aether");
         }
         if (mixinClassName.endsWith(".SablePlayerEntityCullingMixin")) {
             return modPresent("sable") && modPresent("entityculling");
@@ -43,7 +81,8 @@ public final class OptionalMixinPlugin implements IMixinConfigPlugin {
                 || mixinClassName.endsWith(".FirstPersonHeldItemGeometryMixin")
                 || mixinClassName.endsWith(".FirstPersonEmfArmPartMixin")
                 || mixinClassName.endsWith(".FirstPersonDefaultAccessoryArmMixin")) {
-            return modPresent("firstperson") && modPresent("bettercombat") && modPresent("playeranimator")
+            return modPresent("firstperson") && (modPresent("irons_artifice")
+                    || modPresent("bettercombat") && modPresent("playeranimator"))
                     && (!mixinClassName.endsWith(".FirstPersonEmfArmPartMixin") || modPresent("entity_model_features"))
                     && (!mixinClassName.endsWith(".FirstPersonDefaultAccessoryArmMixin") || modPresent("accessories"));
         }
@@ -65,6 +104,10 @@ public final class OptionalMixinPlugin implements IMixinConfigPlugin {
             return modPresent("sable_player_ragdoll") && modPresent("accessories") && modPresent("curios")
                     && modPresent("accessories_compat_layer")
                     && modPresent(mixinClassName.endsWith(".RagdollArtifactArmMixin") ? "artifacts" : "cataclysm");
+        }
+        if (mixinClassName.endsWith(".RagdollAetherArmsMixin")) {
+            return modPresent("sable_player_ragdoll") && modPresent("accessories") && modPresent("curios")
+                    && modPresent("accessories_compat_layer") && modPresent("aether");
         }
         if (mixinClassName.endsWith(".TidalHookStateAccessor")
                 || mixinClassName.endsWith(".TidalGrappleImpactMixin")) {
@@ -159,6 +202,13 @@ public final class OptionalMixinPlugin implements IMixinConfigPlugin {
         // recursive transformation of the very class to which this mixin applies.
         var loadingMods = FMLLoader.getLoadingModList();
         return loadingMods != null && loadingMods.getModFileById(modId) != null;
+    }
+
+    private static boolean discoveredVersionAtLeast(String modId, String minimum) {
+        var loadingMods = FMLLoader.getLoadingModList();
+        var file = loadingMods == null ? null : loadingMods.getModFileById(modId);
+        return file != null && file.getMods().stream().anyMatch(mod -> mod.getModId().equals(modId)
+                && mod.getVersion().compareTo(new DefaultArtifactVersion(minimum)) >= 0);
     }
 
     @Override public void onLoad(String mixinPackage) {}
