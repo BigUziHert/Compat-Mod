@@ -1,4 +1,23 @@
-# Version 1.2.13 verification record
+# Version 1.2.14 verification record
+
+## Third-person accessory allocation investigation — 2026-11-12
+
+A 30-second live Java 25 profile captured active player/accessory rendering after a report of sustained 220 to 160–180 FPS when entering third person. It identified repeated Aether cape lookups through accessory pose/skin queries: approximately 2.68 GB of sampled iterator-splitting allocations occurred in that branch. The initial allocation sample's lifetime carry-in was excluded and totals were checked against thread-allocation counter deltas. Sophisticated Backpacks accounted for 46 of 66 sampled accessory-dispatch stacks. This unmarked live capture has no matched first-person baseline and does not prove the cause of the whole FPS drop. [Profile and limitations](verification/accessory-fps-1.2.14/PROFILE.md)
+
+The candidate changes only the parallel flag at Aether's two native cape searches when both fetched cape inventories contain at most one slot. Expanded inventories keep the original parallel behavior. No item results or render data are cached. The full build and developer harness compile successfully, and **191 unit tests pass**, with no failures, errors or skips. New tests cover the installed native call/local-variable contracts, equivalent zero/one-element results without iterator splitting, expanded-slot fallback and optional-mod/control gates. [Native verification and artifact](verification/accessory-fps-1.2.14/REPORT.md)
+
+Two fresh disposable clients using the same production/probe/mod jars passed the same **12 native cape-selection checks**, with original inventory/settings restoration. Runtime bytecode verifies exactly two injected calls in the candidate and none in the focused native control. After 20,000 warmup calls, three 20,000-call windows measured median allocation **9,465.31 to 656 bytes per lookup**, a **93.07% reduction for this helper**. The checks ran on Java 21.0.7; the live profile used Java 25.0.3. Four zero/two-slot checks use synthetic native inventories rather than gameplay slot resizing. A rejected first candidate's startup error was corrected and is retained separately. These helper checks are separate from the gameplay measurements below.
+
+The subsequent FPS comparison completed **four fresh Java 25/ZGC processes**, two per condition in native / optimized / optimized / native order. Both conditions used identical 1.2.14 production, benchmark and mod jars; only `emfattachments.aetherParallelCapeLookup` differed. Sixteen measured scenes produced **262,940 frames over 960.02 seconds**, with matched 1440p shader settings, world resets and camera/workload checks. FirstPerson was absent. [Raw statistics, repeat ranges and frame-time tails](verification/accessory-fps-1.2.14/fps-r4/fps-comparison.md)
+
+| Third-person scene | Native parallel FPS | Optimized FPS | Change |
+| --- | ---: | ---: | ---: |
+| Ordinary ground | 239.61 | 270.21 | +12.77% |
+| Moving deck | 235.91 | 258.79 | +9.70% |
+
+The fixture matches the clarified equipment arrangement: cosmetic aviator goggles replace functional night-vision goggles in the same native hat slot, giving nine selected accessory renderers from ten equipped stacks. The separate helmet and other armor are Netherite, with representative gold Silence trim; the dyed Netherite backpack has no contents, upgrades or displayed items. All **16 original screenshots** were reviewed for consistent gear, camera and scene, with ambient mob positions varying. The 1% lows were mixed and rare stalls remain. These two repeats per condition support an improvement in this fixture, not a guarantee that the user's full multiplayer FPS drop is resolved. The user-instance audit passed unchanged; 1.2.13 remains installed. [Full verification and limits](verification/accessory-fps-1.2.14/REPORT.md)
+
+# Historical version 1.2.13 verification record
 
 ## Mod update follow-up — 2026-11-12
 

@@ -33,6 +33,10 @@ public final class OptionalMixinPlugin implements IMixinConfigPlugin {
         if (Boolean.getBoolean("emfattachments.disable")) {
             return false;
         }
+        if (mixinClassName.endsWith(".AetherCapeLookupMixin")) {
+            return modPresent("aether") && modPresent("accessories")
+                    && !Boolean.getBoolean("emfattachments.aetherParallelCapeLookup");
+        }
         if (mixinClassName.endsWith(".RagdollHeadwearRoutingMixin")
                 || mixinClassName.endsWith(".RagdollCuriosHeadwearRoutingMixin")) {
             return modPresent("sable_player_ragdoll") && modPresent("accessories")

@@ -1,5 +1,6 @@
 package dev.caleb.emfattachments.perf;
 
+import io.wispforest.accessories.Accessories;
 import io.wispforest.accessories.api.AccessoriesAPI;
 import io.wispforest.accessories.api.AccessoriesCapability;
 import io.wispforest.accessories.api.AccessoriesContainer;
@@ -14,16 +15,29 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.armortrim.ArmorTrim;
+import net.minecraft.world.item.armortrim.TrimMaterials;
+import net.minecraft.world.item.armortrim.TrimPatterns;
 import net.neoforged.neoforge.attachment.AttachmentType;
+import net.p3pp3rf1y.sophisticatedbackpacks.backpack.BackpackItem;
+import net.p3pp3rf1y.sophisticatedbackpacks.backpack.wrapper.BackpackWrapper;
+import net.p3pp3rf1y.sophisticatedcore.init.ModCoreDataComponents;
 
 /** One-time native equipment setup, deliberately independent of the compatibility mod. */
 public final class BenchmarkLoadouts {
     private BenchmarkLoadouts() {}
+
+    // The user specified dye and trim, but not their colors/pattern/material.
+    // These reproducible representatives are recorded as assumptions in metadata.
+    private static final int REPORTED_BACKPACK_MAIN_COLOR = 0xFF1E5AA8;
+    private static final int REPORTED_BACKPACK_ACCENT_COLOR = 0xFFFFC940;
 
     public record Profile(String name, List<String> accessories, Map<EquipmentSlot, String> equipment) {}
 
@@ -50,6 +64,36 @@ public final class BenchmarkLoadouts {
 
     public static List<Profile> profiles() { return PROFILES; }
 
+    /** Local-only workload selection; the historical six crowd profiles stay unchanged. */
+    public static Applied equipLocal(LivingEntity entity) {
+        String selection = System.getProperty("emfattachments.perfLocalLoadout", "historical");
+        if (selection.equals("historical")) return equip(entity, 0);
+        if (!selection.equals("reported-accessories")) {
+            throw new IllegalArgumentException("Unknown local benchmark loadout " + selection);
+        }
+        String backpack = System.getProperty("emfattachments.perfBackpack", "sophisticatedbackpacks:netherite_backpack");
+        if (!List.of("sophisticatedbackpacks:backpack", "sophisticatedbackpacks:copper_backpack",
+                "sophisticatedbackpacks:iron_backpack", "sophisticatedbackpacks:gold_backpack",
+                "sophisticatedbackpacks:diamond_backpack", "sophisticatedbackpacks:netherite_backpack").contains(backpack)) {
+            throw new IllegalArgumentException("Unsupported reported-loadout backpack " + backpack);
+        }
+        EnumMap<EquipmentSlot, String> equipment = new EnumMap<>(EquipmentSlot.class);
+        equipment.put(EquipmentSlot.HEAD, "minecraft:netherite_helmet");
+        equipment.put(EquipmentSlot.CHEST, "minecraft:netherite_chestplate");
+        equipment.put(EquipmentSlot.LEGS, "minecraft:netherite_leggings");
+        equipment.put(EquipmentSlot.FEET, "minecraft:netherite_boots");
+        equipment.put(EquipmentSlot.MAINHAND, "minecraft:air");
+        equipment.put(EquipmentSlot.OFFHAND, "minecraft:air");
+        // Equip the all-slot Whoopee Cushion last so it cannot consume a slot
+        // needed by a more restricted item. Every assignment remains native-validated.
+        Profile profile = new Profile("reported-accessories", List.of(
+                "artifacts:night_vision_goggles",
+                "artifacts:lucky_scarf", backpack, "artifacts:onion_ring", "artifacts:golden_hook",
+                "artifacts:helium_flamingo", "artifacts:bunny_hoppers", "aether:diamond_gloves",
+                "artifacts:whoopee_cushion"), Map.copyOf(equipment));
+        return equip(entity, profile, true);
+    }
+
     private static Profile profile(String name, String armor, String weapon, String shield,
                                    boolean helmet, String... accessories) {
         EnumMap<EquipmentSlot, String> equipment = new EnumMap<>(EquipmentSlot.class);
@@ -64,7 +108,11 @@ public final class BenchmarkLoadouts {
 
     /** The caller owns the entity and invokes this only outside measured intervals. */
     public static Applied equip(LivingEntity entity, int profileIndex) {
-        Applied applied = new Applied(entity, PROFILES.get(Math.floorMod(profileIndex, PROFILES.size())));
+        return equip(entity, PROFILES.get(Math.floorMod(profileIndex, PROFILES.size())), false);
+    }
+
+    private static Applied equip(LivingEntity entity, Profile profile, boolean replaceAllAccessories) {
+        Applied applied = new Applied(entity, profile, replaceAllAccessories);
         try {
             applied.apply();
             return applied;
@@ -77,7 +125,8 @@ public final class BenchmarkLoadouts {
                 cause.append(current.getClass().getSimpleName()).append(": ").append(current.getMessage());
             }
             throw new IllegalStateException("Native benchmark loadout failed: " + applied.profile.name()
-                    + " at " + applied.setupStep + ": " + cause, failure);
+                    + " at " + applied.setupStep + ": " + cause
+                    + (applied.replaceAllAccessories ? "; all native candidates=" + applied.nativeSlotCandidates : ""), failure);
         }
     }
 
@@ -91,6 +140,45 @@ public final class BenchmarkLoadouts {
 
     private record Touched(AccessoriesContainer container, int index, ItemStack normal,
                            ItemStack cosmetic, boolean render) {}
+
+    private record ExpectedAccessory(AccessoriesContainer container, int index, ItemStack stack, ItemStack cosmetic) {}
+
+    /** Actual native component witness, collected only outside timed rendering. */
+    private static Map<String, Object> appearance(ItemStack stack) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("foil", stack.hasFoil());
+        ArmorTrim trim = stack.get(DataComponents.TRIM);
+        result.put("trimPattern", trim == null ? "" : trim.pattern().unwrapKey().orElseThrow().location().toString());
+        result.put("trimMaterial", trim == null ? "" : trim.material().unwrapKey().orElseThrow().location().toString());
+        if (stack.getItem() instanceof BackpackItem) {
+            result.put("backpackMainColor", String.format(java.util.Locale.ROOT, "%08x", BackpackItem.getMainColor(stack)));
+            result.put("backpackAccentColor", String.format(java.util.Locale.ROOT, "%08x", BackpackItem.getAccentColor(stack)));
+            result.put("backpackInventorySlots", stack.getOrDefault(ModCoreDataComponents.NUMBER_OF_INVENTORY_SLOTS.get(), -1));
+            result.put("backpackUpgradeSlots", stack.getOrDefault(ModCoreDataComponents.NUMBER_OF_UPGRADE_SLOTS.get(), -1));
+            result.put("backpackStorageUuidPresent", stack.has(ModCoreDataComponents.STORAGE_UUID.get()));
+        }
+        return Map.copyOf(result);
+    }
+
+    private static void initializeEmptyBackpack(ItemStack stack) {
+        BackpackItem item = (BackpackItem) stack.getItem();
+        ItemStack before = stack.copy();
+        // The native wrapper adds its configured slot-count components on first
+        // use. Do this once before freezing the expected stack, never in timing.
+        BackpackWrapper.fromStack(stack);
+        if (stack.getOrDefault(ModCoreDataComponents.NUMBER_OF_INVENTORY_SLOTS.get(), -1) != item.getNumberOfSlots()
+                || stack.getOrDefault(ModCoreDataComponents.NUMBER_OF_UPGRADE_SLOTS.get(), -1) != item.getNumberOfUpgradeSlots()
+                || stack.has(ModCoreDataComponents.STORAGE_UUID.get()))
+            throw new IllegalStateException("Unexpected native empty-backpack initialization: " + stack.getComponents());
+        ItemStack normalized = stack.copy();
+        for (ItemStack compared : List.of(before, normalized)) {
+            compared.remove(ModCoreDataComponents.NUMBER_OF_INVENTORY_SLOTS.get());
+            compared.remove(ModCoreDataComponents.NUMBER_OF_UPGRADE_SLOTS.get());
+        }
+        if (!ItemStack.matches(before, normalized))
+            throw new IllegalStateException("Native backpack initialization changed more than slot-count defaults: before="
+                    + before.getComponents() + "; after=" + normalized.getComponents());
+    }
 
     private static ItemStack storedItem(LivingEntity entity, EquipmentSlot slot) {
         if (entity instanceof Player player) {
@@ -107,22 +195,117 @@ public final class BenchmarkLoadouts {
     public static final class Applied implements AutoCloseable {
         private final LivingEntity entity;
         private final Profile profile;
+        private final boolean replaceAllAccessories;
         private final EnumMap<EquipmentSlot, ItemStack> originalEquipment = new EnumMap<>(EquipmentSlot.class);
+        private final EnumMap<EquipmentSlot, ItemStack> expectedEquipment = new EnumMap<>(EquipmentSlot.class);
         private final List<Touched> touched = new ArrayList<>();
+        private final List<ExpectedAccessory> expectedAccessories = new ArrayList<>();
+        private final Map<String, List<Map<String, Object>>> nativeSlotCandidates = new LinkedHashMap<>();
         private Map<String, Object> metadata = Map.of();
         private Object scarfData;
         private Method scarfSetter;
         private boolean originalScarf, scarfTouched, closed, restored;
         private String setupStep = "start";
 
-        private Applied(LivingEntity entity, Profile profile) { this.entity = entity; this.profile = profile; }
+        private Applied(LivingEntity entity, Profile profile, boolean replaceAllAccessories) {
+            this.entity = entity; this.profile = profile; this.replaceAllAccessories = replaceAllAccessories;
+        }
         public Map<String, Object> metadata() { return metadata; }
         public boolean restored() { return restored; }
+
+        /** Call outside measured intervals after native synchronization and at stage boundaries. */
+        public Map<String, Object> verifyCurrent() {
+            if (closed) throw new IllegalStateException("Cannot verify a closed loadout");
+            if (replaceAllAccessories && !Accessories.config().clientOptions.showCosmeticAccessories())
+                throw new IllegalStateException("Reported loadout requires native cosmetic accessory rendering enabled");
+            List<Map<String, Object>> equipmentRows = new ArrayList<>(), accessoryRows = new ArrayList<>();
+            for (EquipmentSlot slot : List.of(EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS,
+                    EquipmentSlot.FEET, EquipmentSlot.MAINHAND, EquipmentSlot.OFFHAND)) {
+                ItemStack expected = expectedEquipment.get(slot), actual = storedItem(entity, slot);
+                if (expected == null || !ItemStack.matches(expected, actual))
+                    throw new IllegalStateException("Current equipment differs from selected loadout: " + slot);
+                equipmentRows.add(Map.of("slot", slot.getName(), "item", BuiltInRegistries.ITEM.getKey(actual.getItem()).toString(),
+                        "count", actual.getCount(), "appearance", appearance(actual)));
+            }
+            for (ExpectedAccessory expected : expectedAccessories) {
+                AccessoriesContainer container = expected.container;
+                if (container.getSize() <= expected.index)
+                    throw new IllegalStateException("Selected accessory slot disappeared: " + container.getSlotName());
+                ItemStack actual = container.getAccessories().getItem(expected.index);
+                ItemStack cosmetic = container.getCosmeticAccessories().getItem(expected.index);
+                if (!ItemStack.matches(expected.stack, actual) || !ItemStack.matches(expected.cosmetic, cosmetic) || !container.shouldRender(expected.index))
+                    throw new IllegalStateException("Current accessory differs from selected loadout: " + container.getSlotName() + ":" + expected.index
+                            + "; expected=" + expected.stack + " components=" + expected.stack.getComponents()
+                            + "; actual=" + actual + " components=" + actual.getComponents()
+                            + "; expectedCosmetic=" + expected.cosmetic.getComponents() + "; cosmetic=" + cosmetic.getComponents());
+                ItemStack selectedStack = cosmetic.isEmpty() ? actual : cosmetic;
+                var renderer = AccessoriesRendererRegistry.getRenderer(selectedStack);
+                if (renderer == null || !renderer.shouldRender(container.shouldRender(expected.index)))
+                    throw new IllegalStateException("Selected accessory is not renderable: " + actual);
+                accessoryRows.add(Map.of("slot", container.getSlotName(), "index", expected.index,
+                        "item", BuiltInRegistries.ITEM.getKey(selectedStack.getItem()).toString(), "count", selectedStack.getCount(),
+                        "functionalItem", BuiltInRegistries.ITEM.getKey(actual.getItem()).toString(),
+                        "selectedCosmetic", BuiltInRegistries.ITEM.getKey(cosmetic.getItem()).toString(),
+                        "visible", true, "renderer", renderer.getClass().getName(), "appearance", appearance(selectedStack)));
+            }
+            if (replaceAllAccessories) {
+                var capability = AccessoriesCapability.get(entity);
+                if (capability == null) throw new IllegalStateException("Current native capability disappeared");
+                verifyReportedContents(capability);
+            }
+            return Map.of("profile", profile.name(), "verified", true, "accessoryCount", accessoryRows.size(),
+                    "equippedItemCount", expectedAccessories.size() + expectedAccessories.stream().filter(e -> !e.cosmetic.isEmpty()).count(),
+                    "exactAccessoryLoadout", replaceAllAccessories,
+                    "equipment", List.copyOf(equipmentRows), "accessories", List.copyOf(accessoryRows));
+        }
+
+        private void verifyReportedContents(AccessoriesCapability capability) {
+            int actualCount = 0, cosmeticCount = 0;
+            for (var container : capability.getContainers().values()) {
+                boolean armor = ArmorSlotTypes.isArmorType(container.getSlotName());
+                for (int index = 0; index < container.getSize(); index++) {
+                    ItemStack actual = container.getAccessories().getItem(index), cosmetic = container.getCosmeticAccessories().getItem(index);
+                    if (armor) {
+                        if (!cosmetic.isEmpty()) throw new IllegalStateException("Unexpected cosmetic armor in " + container.getSlotName());
+                        continue;
+                    }
+                    final AccessoriesContainer check = container; final int slotIndex = index;
+                    ExpectedAccessory expected = expectedAccessories.stream()
+                            .filter(e -> e.container == check && e.index == slotIndex).findFirst().orElse(null);
+                    if (expected == null) {
+                        if (!actual.isEmpty() || !cosmetic.isEmpty())
+                            throw new IllegalStateException("Unexpected extra accessory in " + container.getSlotName() + ":" + index);
+                        continue;
+                    }
+                    if (!ItemStack.matches(expected.stack, actual) || !ItemStack.matches(expected.cosmetic, cosmetic)
+                            || !container.shouldRender(index)) throw new IllegalStateException("Reported slot differs at " + container.getSlotName() + ":" + index);
+                    if (!actual.isEmpty()) actualCount++;
+                    if (!cosmetic.isEmpty()) cosmeticCount++;
+                }
+            }
+            if (actualCount != 9 || cosmeticCount != 1 || expectedAccessories.size() != 9)
+                throw new IllegalStateException("Expected nine functional accessories and one cosmetic, got " + actualCount + "/" + cosmeticCount);
+        }
 
         private void apply() throws ReflectiveOperationException {
             setupStep = "native capability lookup";
             AccessoriesCapability capability = AccessoriesCapability.get(entity);
             if (capability == null) throw new IllegalStateException("No native Accessories capability on " + entity.getClass().getName());
+            if (replaceAllAccessories) {
+                if (!Accessories.config().clientOptions.showCosmeticAccessories())
+                    throw new IllegalStateException("Reported loadout requires native cosmetic accessory rendering enabled");
+                List<String> candidateItems = new ArrayList<>(profile.accessories());
+                candidateItems.add("aeronautics:aviators_goggles");
+                for (String id : candidateItems) {
+                    List<Map<String, Object>> candidates = new ArrayList<>();
+                    AccessoriesAPI.getStackSlotTypes(entity, stack(id)).stream()
+                            .filter(type -> !ArmorSlotTypes.isArmorType(type.name()))
+                            .map(capability::getContainer).filter(container -> container != null)
+                            .sorted(Comparator.comparing(AccessoriesContainer::getSlotName))
+                            .forEach(container -> candidates.add(Map.of("slot", container.getSlotName(), "size", container.getSize())));
+                    nativeSlotCandidates.put(id, List.copyOf(candidates));
+                }
+            }
             List<Map<String, Object>> equipmentRows = new ArrayList<>(), accessoryRows = new ArrayList<>();
             // Snapshot storage before changing either hand: Better Combat masks the offhand
             // getter when the main hand is two-handed, without emptying its actual inventory.
@@ -135,6 +318,11 @@ public final class BenchmarkLoadouts {
                 String id = profile.equipment().get(slot);
                 setupStep = "equipment " + slot.getName() + "=" + id;
                 ItemStack replacement = stack(id);
+                if (replaceAllAccessories && slot.getType() == EquipmentSlot.Type.HUMANOID_ARMOR) {
+                    replacement.set(DataComponents.TRIM, new ArmorTrim(
+                            entity.registryAccess().lookupOrThrow(Registries.TRIM_MATERIAL).getOrThrow(TrimMaterials.GOLD),
+                            entity.registryAccess().lookupOrThrow(Registries.TRIM_PATTERN).getOrThrow(TrimPatterns.SILENCE)));
+                }
                 entity.setItemSlot(slot, replacement);
                 ItemStack actual = entity.getItemBySlot(slot), stored = storedItem(entity, slot);
                 if (!ItemStack.matches(actual, replacement) || !ItemStack.matches(stored, replacement))
@@ -142,11 +330,36 @@ public final class BenchmarkLoadouts {
                             + "; expected=" + replacement + " components=" + replacement.getComponents()
                             + "; visible=" + actual + " components=" + actual.getComponents()
                             + "; stored=" + stored + " components=" + stored.getComponents());
-                equipmentRows.add(Map.of("slot", slot.getName(), "item", id));
+                expectedEquipment.put(slot, replacement.copy());
+                equipmentRows.add(replaceAllAccessories
+                        ? Map.of("slot", slot.getName(), "item", id, "appearance", appearance(actual))
+                        : Map.of("slot", slot.getName(), "item", id));
             }
+            if (replaceAllAccessories) {
+                setupStep = "snapshot and clear previous accessory loadout";
+                for (var container : capability.getContainers().values()) {
+                    boolean armor = ArmorSlotTypes.isArmorType(container.getSlotName());
+                    for (int index = 0; index < container.getSize(); index++) {
+                        touched.add(new Touched(container, index,
+                                container.getAccessories().getItem(index).copy(),
+                                container.getCosmeticAccessories().getItem(index).copy(), container.shouldRender(index)));
+                        if (!armor) container.getAccessories().setItem(index, ItemStack.EMPTY);
+                        container.getCosmeticAccessories().setItem(index, ItemStack.EMPTY);
+                        container.renderOptions().set(index, true);
+                    }
+                    container.markChanged();
+                }
+            }
+            List<Touched> assigned = new ArrayList<>();
             for (String id : profile.accessories()) {
                 setupStep = "accessory " + id;
                 ItemStack replacement = stack(id);
+                if (replaceAllAccessories && replacement.getItem() instanceof BackpackItem) {
+                    // Use the mod's native component setter; do not invent stored
+                    // contents/UUIDs or initialize upgrades in the measured fixture.
+                    BackpackItem.setColors(replacement, REPORTED_BACKPACK_MAIN_COLOR, REPORTED_BACKPACK_ACCENT_COLOR);
+                    initializeEmptyBackpack(replacement);
+                }
                 List<AccessoriesContainer> candidates = AccessoriesAPI.getStackSlotTypes(entity, replacement).stream()
                         .filter(type -> !ArmorSlotTypes.isArmorType(type.name()))
                         .map(capability::getContainer).filter(container -> container != null && container.getSize() > 0)
@@ -159,7 +372,7 @@ public final class BenchmarkLoadouts {
                     for (AccessoriesContainer container : candidates) {
                         for (int i = 0; i < container.getSize(); i++) {
                             final AccessoriesContainer check = container; final int index = i;
-                            if (touched.stream().anyMatch(t -> t.container == check && t.index == index)) continue;
+                            if (assigned.stream().anyMatch(t -> t.container == check && t.index == index)) continue;
                             if (requireEmpty && !container.getAccessories().getItem(i).isEmpty()) continue;
                             if (!AccessoriesAPI.canInsertIntoSlot(replacement, container.createReference(i))) continue;
                             selected = container; selectedIndex = i; break;
@@ -170,22 +383,37 @@ public final class BenchmarkLoadouts {
                 }
                 if (selected == null) throw new IllegalStateException("No unoccupied native slot for " + id + "; candidate containers="
                         + candidates.stream().map(c -> c.getSlotName() + ":" + c.getSize()).toList());
-                var renderer = AccessoriesRendererRegistry.getRenderer(replacement);
+                ItemStack cosmetic = replaceAllAccessories && id.equals("artifacts:night_vision_goggles")
+                        ? stack("aeronautics:aviators_goggles") : ItemStack.EMPTY;
+                if (!cosmetic.isEmpty() && !AccessoriesAPI.canInsertIntoSlot(cosmetic, selected.createReference(selectedIndex)))
+                    throw new IllegalStateException("Native cosmetic goggles insertion rejected for " + selected.getSlotName());
+                ItemStack selectedStack = cosmetic.isEmpty() ? replacement : cosmetic;
+                var renderer = AccessoriesRendererRegistry.getRenderer(selectedStack);
                 if (renderer == null) throw new IllegalStateException("Native Accessories renderer missing for " + id);
                 Touched before = new Touched(selected, selectedIndex,
                         selected.getAccessories().getItem(selectedIndex).copy(),
                         selected.getCosmeticAccessories().getItem(selectedIndex).copy(), selected.shouldRender(selectedIndex));
-                touched.add(before);
-                selected.getCosmeticAccessories().setItem(selectedIndex, ItemStack.EMPTY);
+                assigned.add(before);
+                if (!replaceAllAccessories) touched.add(before);
+                selected.getCosmeticAccessories().setItem(selectedIndex, cosmetic);
                 selected.renderOptions().set(selectedIndex, true);
                 selected.getAccessories().setItem(selectedIndex, replacement);
                 selected.markChanged();
-                if (!ItemStack.matches(selected.getAccessories().getItem(selectedIndex), replacement) || !selected.shouldRender(selectedIndex))
+                if (!ItemStack.matches(selected.getAccessories().getItem(selectedIndex), replacement)
+                        || !ItemStack.matches(selected.getCosmeticAccessories().getItem(selectedIndex), cosmetic) || !selected.shouldRender(selectedIndex))
                     throw new IllegalStateException("Native accessory assignment failed for " + id);
-                accessoryRows.add(Map.of("item", id, "slot", selected.getSlotName(), "index", selectedIndex,
+                expectedAccessories.add(new ExpectedAccessory(selected, selectedIndex, replacement.copy(), cosmetic.copy()));
+                accessoryRows.add(Map.of("item", BuiltInRegistries.ITEM.getKey(selectedStack.getItem()).toString(),
+                        "functionalItem", id, "slot", selected.getSlotName(), "index", selectedIndex,
                         "renderer", renderer.getClass().getName(), "visible", true,
+                        "selectedCosmetic", BuiltInRegistries.ITEM.getKey(selected.getCosmeticAccessories().getItem(selectedIndex).getItem()).toString(),
+                        "appearance", appearance(selectedStack),
                         "curiosRendererBridge", renderer.getClass().getName().toLowerCase(java.util.Locale.ROOT).contains("curio"),
                         "nativeCapeSkinPath", id.endsWith("_cape")));
+            }
+            if (replaceAllAccessories) {
+                setupStep = "verify exact reported accessory workload";
+                verifyReportedContents(capability);
             }
             if (profile.accessories().contains("deep_aether:floaty_scarf")) {
                 setupStep = "Deep Aether scarf attachment";
@@ -200,11 +428,22 @@ public final class BenchmarkLoadouts {
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("profile", profile.name());
             result.put("accessoryCount", accessoryRows.size());
+            result.put("equippedItemCount", expectedAccessories.size() + expectedAccessories.stream().filter(e -> !e.cosmetic.isEmpty()).count());
             result.put("equipment", List.copyOf(equipmentRows));
             result.put("accessories", List.copyOf(accessoryRows));
             result.put("floatyScarfWrapped", scarfTouched);
             result.put("twoHandedOffhandPolicy", "The Incinerator and diamond claymore use an intentionally empty offhand; native Better Combat masks offhand rendering for two-handed weapons.");
             result.put("setupPolicy", "Native Accessories slot discovery and insertion validation; functional item visible, selected cosmetic cleared, only touched slots/equipment restored. No use/attack/ability activation.");
+            if (replaceAllAccessories) {
+                result.put("exactAccessoryLoadout", true);
+                result.put("nativeSlotCandidates", Map.copyOf(nativeSlotCandidates));
+                result.put("backpackFixture", "Fresh dyed stack of the selected backpack tier; native wrapper initializes only configured inventory/upgrade slot-count components before the exact stack snapshot. No storage UUID, stored contents, upgrades or display items are synthesized.");
+                result.put("appearanceAssumptions", Map.of("backpackMainColor", "ff1e5aa8", "backpackAccentColor", "ffffc940",
+                        "armorTrimPattern", "minecraft:silence", "armorTrimMaterial", "minecraft:gold",
+                        "reason", "User specified dyed Netherite backpack and full trimmed Netherite armor, but not colors, trim pattern/material, contents or upgrades.",
+                        "enchantments", "none supplied", "heldItems", "empty"));
+                result.put("setupPolicy", "Snapshot all accessory state and clear prior items/cosmetics; preserve actual armor. Equip nine native-validated functional accessories plus cosmetic aviator goggles replacing the night-vision goggles in the same native one-slot hat container: ten stored items, nine selected accessory renderers. Restore all original items/visibility/equipment afterward. Full Netherite armor with gold silence trim; held items empty; no use/attack/ability activation.");
+            }
             metadata = Map.copyOf(result);
         }
 

@@ -44,6 +44,9 @@ if options.first_person_api:
     compile_only_api = dict(path=str(api), sha256=sha(api), bytes=api.stat().st_size,
                             gameRuntimeInstallation=False, bundledInPerfJar=False)
     gradle_arguments.append('-PfirstPersonJar=' + str(api))
+# The legacy exporter declares an output but no classpath inputs. A cached
+# export can retain removed jar paths after the installed pack is updated.
+(OUTPUT / 'compile-classpath.txt').unlink(missing_ok=True)
 subprocess.run(gradle_arguments, cwd=ROOT, env=environment, check=True)
 classpath = (OUTPUT / 'compile-classpath.txt').read_text().strip()
 # The exporter predates explicit inputs. A cached export must never omit the

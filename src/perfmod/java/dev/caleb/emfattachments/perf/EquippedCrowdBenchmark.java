@@ -69,6 +69,8 @@ public final class EquippedCrowdBenchmark {
     private static final UUID OFFLINE_ID = UUID.nameUUIDFromBytes("OfflinePlayer:AttachmentTest".getBytes(StandardCharsets.UTF_8));
     private static final boolean IRIS = ModList.get().isLoaded("iris");
     private static final boolean SABLE_REDUCED_BENCHMARK = Boolean.getBoolean("emfattachments.sableReducedBenchmark");
+    private static final boolean REPORTED_ACCESSORIES_BENCHMARK = "reported-accessories".equals(
+            System.getProperty("emfattachments.perfLocalLoadout"));
     private static final Scene[] SABLE_REDUCED_SCENES = {
             new Scene("deck-open-8", 8, true, true, false, 18),
             new Scene("deck-open-24", 24, true, true, false, 18),
@@ -487,6 +489,29 @@ public final class EquippedCrowdBenchmark {
             report.put("perspectiveComparison", perspectiveComparison);
             report.put("sableReducedBenchmark", sableReducedBenchmark);
             report.put("sableFullTicksProperty", Boolean.getBoolean("emfattachments.sableFullTicks"));
+            report.put("capeParallelLookupControl", Boolean.getBoolean("emfattachments.aetherParallelCapeLookup"));
+            report.put("perfLocalLoadout", System.getProperty("emfattachments.perfLocalLoadout", "historical"));
+            report.put("jvmDetails", Map.of("javaVersion", System.getProperty("java.version"),
+                    "vmName", System.getProperty("java.vm.name"),
+                    "heapMaximumBytes", Runtime.getRuntime().maxMemory(),
+                    "collectors", ManagementFactory.getGarbageCollectorMXBeans().stream()
+                            .map(GarbageCollectorMXBean::getName).toList()));
+            if (REPORTED_ACCESSORIES_BENCHMARK) {
+                try {
+                    List<String> handlers = Arrays.stream(Class.forName("com.aetherteam.aether.mixin.AetherMixinHooks")
+                                    .getDeclaredMethods()).map(java.lang.reflect.Method::getName)
+                            .filter(name -> name.contains("emfattachments$") &&
+                                    (name.contains("avoidSingleSlotParallelLookup") || name.contains("useParallelLookup")))
+                            .sorted().toList();
+                    boolean present = handlers.size() == 2;
+                    if (handlers.size() != (Boolean.getBoolean("emfattachments.aetherParallelCapeLookup") ? 0 : 2))
+                        throw new IllegalStateException("Cape benchmark mode does not match native handler presence: " + handlers);
+                    report.put("capeLookupHandlerPresent", present);
+                    report.put("capeLookupHandlers", handlers);
+                } catch (ReflectiveOperationException failure) {
+                    throw new IllegalStateException("Cannot verify native cape lookup benchmark mode", failure);
+                }
+            }
             if (sableReducedBenchmark) {
                 if (!ModList.get().isLoaded("emfattachments") || !ModList.get().isLoaded("entityculling"))
                     throw new IllegalStateException("Reduced-tick A/B requires the same production jar and Entity Culling in both modes");
@@ -527,6 +552,8 @@ public final class EquippedCrowdBenchmark {
             report.put("stages", stages);
             report.put("scope", sableReducedBenchmark
                     ? "Same-jar full/reduced Sable tick comparison: equipped RemotePlayers receive identical independent plot interpolation targets on a real moving server-owned deck, with open and native wall-occluded views. Client-side actor and rendering costs are measured; multiplayer packet transport and server simulation costs are excluded."
+                    : REPORTED_ACCESSORIES_BENCHMARK
+                    ? "Same-jar native-parallel/optimized Aether cape lookup comparison with nine functional accessories plus cosmetic aviator goggles replacing the night-vision goggles. Fresh offline clients use matched graphics, native player/accessory rendering and fixed first/rear-third-person cameras on ordinary ground and a real moving Sable deck."
                     : "Standalone offline native client-render workload: equipped RemotePlayer entities with native default skin/cape hooks, deterministic walking and native full ticks; a real server-owned moving Sable platform carries the local observer and remote plot-position players. Compatibility jar is physically present/absent per manifest.");
             report.put("limitations", List.of("Remote actors are client-only clones, not actual networked clients; no network, skin downloads or real remote-server simulation is benchmarked.",
                     "Walking target updates and controlled native physics-pipeline teleports add shared fixture work to every mode.",
@@ -622,9 +649,9 @@ public final class EquippedCrowdBenchmark {
         void prepare() {
             keys.keySet().forEach(key -> key.setDown(false));
             // Capture the actual client state before the authoritative server setup can synchronize its gear.
-            clientGear = BenchmarkLoadouts.equip(local, 0);
+            clientGear = BenchmarkLoadouts.equipLocal(local);
             preparing = server(p -> {
-                serverSnapshot = new Snapshot(p); serverGear = BenchmarkLoadouts.equip(p, 0);
+                serverSnapshot = new Snapshot(p); serverGear = BenchmarkLoadouts.equipLocal(p);
                 var container = SubLevelContainer.getContainer(p.serverLevel());
                 if (container == null) throw new IllegalStateException("Missing Sable container");
                 Pose3d pose = new Pose3d(); pose.position().set(platformBase.x, platformBase.y, platformBase.z);
@@ -678,6 +705,16 @@ public final class EquippedCrowdBenchmark {
                 }
                 preflightProfiles();
                 report.put("preparation", preparationEvidence); report.put("clientLocalLoadout", clientGear.metadata());
+                if (REPORTED_ACCESSORIES_BENCHMARK) {
+                    report.put("initialLocalLoadoutWitness", clientGear.verifyCurrent());
+                    var cape = io.wispforest.accessories.api.AccessoriesCapability.get(local).getContainer(
+                            com.aetherteam.aether.item.accessories.cape.CapeItem.getStaticIdentifier());
+                    if (cape == null) throw new IllegalStateException("Missing native cape container");
+                    report.put("capeInventorySizes", List.of(cape.getAccessories().getContainerSize(),
+                            cape.getCosmeticAccessories().getContainerSize()));
+                    if (cape.getAccessories().getContainerSize() != 1 || cape.getCosmeticAccessories().getContainerSize() != 1)
+                        throw new IllegalStateException("Reported-loadout benchmark requires ordinary one-slot cape inventories");
+                }
                 report.put("originalServerState", serverSnapshot.description());
                 waitingInitial = false;
                 if (nowheelComparison) prepareNowheelTelemetry();
@@ -936,6 +973,7 @@ public final class EquippedCrowdBenchmark {
                 maxActualViewYawError = maxActualViewPitchError = 0;
                 minSeen = Integer.MAX_VALUE; maxSeen = 0;
                 report.put("phase", "MEASURE"); report.put("measurementStartedAt", Instant.now().toString());
+                if (REPORTED_ACCESSORIES_BENCHMARK) report.put("stageLoadoutWitness", clientGear.verifyCurrent());
                 write("RUNNING", false, scene.id);
                 for (int i = 0; i < collectors.size(); i++) { gcCountBefore[i] = collectors.get(i).getCollectionCount(); gcTimeBefore[i] = collectors.get(i).getCollectionTime(); }
                 heapBefore = ManagementFactory.getMemoryMXBean().getHeapMemoryUsage().getUsed();
@@ -969,6 +1007,14 @@ public final class EquippedCrowdBenchmark {
             long duration = now - measurementStart;
             long[] raw = Arrays.copyOf(intervals, samples), sorted = raw.clone(); Arrays.sort(sorted);
             Map<String, Object> row = new LinkedHashMap<>();
+            if (REPORTED_ACCESSORIES_BENCHMARK) {
+                row.put("localLoadoutBeforeMeasurement", report.get("stageLoadoutWitness"));
+                row.put("localLoadoutAfterMeasurement", clientGear.verifyCurrent());
+                if (thirdPersonFrames > 0 && localAccessoryDispatches < 9 * localBodyReturns)
+                    throw new IllegalStateException("Expected all nine selected accessory dispatches for each third-person body draw");
+                row.put("reportedAccessoryCoverage", thirdPersonFrames == 0 ||
+                        localBodyReturns > 0 && localAccessoryDispatches >= 9 * localBodyReturns);
+            }
             row.put("sceneId", scene.id); row.put("players", scene.players); row.put("walking", scene.walk);
             row.put("movingSublevel", scene.deck || scene.nearDeck); row.put("realWallOcclusion", scene.occluded);
             if (sableReducedBenchmark) row.put("sableFullTicksProperty", Boolean.getBoolean("emfattachments.sableFullTicks"));

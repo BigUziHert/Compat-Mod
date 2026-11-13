@@ -17,7 +17,7 @@ INSTANCE = Path('C:/Users/caleb/curseforge/minecraft/Instances/Modded Minecraft'
 INSTALL = Path('C:/Users/caleb/curseforge/minecraft/Install')
 RUNTIME = ROOT / '.local/client'
 VERSION = 'neoforge-21.1.264'
-MOD_VERSION = '1.2.13'
+MOD_VERSION = '1.2.14'
 
 
 def sync_emf_hand_setting(source, target):
@@ -133,7 +133,7 @@ def allowed(rules):
     return allow
 
 
-def launch(baseline=False, auto_sweep=True, extra_jvm=()):
+def launch(baseline=False, auto_sweep=True, extra_jvm=(), java_executable=None):
     vanilla = json.loads((INSTALL / 'versions/1.21.1/1.21.1.json').read_text())
     neo = json.loads((INSTALL / f'versions/{VERSION}/{VERSION}.json').read_text())
     libraries = {}
@@ -192,7 +192,9 @@ def launch(baseline=False, auto_sweep=True, extra_jvm=()):
         args += ['--quickPlaySingleplayer', 'AttachmentTest']
     argfile = RUNTIME / 'launch.args'
     argfile.write_text('\n'.join('"' + v.replace('\\', '/').replace('"', '\\"') + '"' for v in args), encoding='utf-8')
-    java = INSTALL / 'runtime/java-runtime-delta/windows-x64/java-runtime-delta/bin/javaw.exe'
+    java = Path(java_executable).resolve() if java_executable else INSTALL / 'runtime/java-runtime-delta/windows-x64/java-runtime-delta/bin/javaw.exe'
+    if not java.is_file() or java.name.lower() not in ('java.exe', 'javaw.exe'):
+        raise ValueError(f'Expected an existing Java executable: {java}')
     with (RUNTIME / 'console.log').open('w') as out, (RUNTIME / 'console-error.log').open('w') as err:
         process = subprocess.Popen([str(java), '@' + str(argfile)], cwd=RUNTIME, stdout=out, stderr=err)
     (RUNTIME / 'process.json').write_text(json.dumps({'pid': process.pid}), encoding='utf-8')

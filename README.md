@@ -2,6 +2,10 @@
 
 A compatibility mod for Minecraft 1.21.1 / NeoForge, built against the installed EMF 3.3.12 and Fresh Animations Player Extension 1.1 setup. Most integrations affect client rendering; the optional Cataclysm grapple correction runs with the server's native motion handling.
 
+Version **1.2.14** avoids parallel-stream allocation in Aether's repeated cape lookup when the functional and cosmetic cape inventories each have at most one slot. Accessory pose rendering can trigger this lookup repeatedly through player-skin queries. Expanded cape inventories retain the native parallel path; Aether still selects the visible functional/cosmetic stack. A live profile identified this allocation cost, but does not establish that it causes the entire reported third-person FPS drop. See the [1.2.14 verification report](verification/accessory-fps-1.2.14/REPORT.md) for the focused checks and remaining limits.
+
+Four matched copied-client runs measured **239.61 → 270.21 FPS (+12.77%)** in third person on ordinary ground and **235.91 → 258.79 FPS (+9.70%)** on the moving deck. Both conditions used the same 1.2.14 jar, with only the cape optimization toggled, on Java 25 with ZGC and 1440p shaders. The fixture follows the reported functional/cosmetic accessory arrangement, with an empty dyed Netherite backpack and representative gold Silence armor trim. These finite repeats do not establish that the entire reported issue is fixed; 1% lows were mixed and rare stalls remain. [FPS comparison](verification/accessory-fps-1.2.14/fps-r4/fps-comparison.md)
+
 Version **1.2.13** restores Entity Culling's reduced client ticks for safely attached remote players on Sable 2.0.6 with Entity Culling 1.12.0. It keeps Sable's native attachment and interpolation maintenance while hidden players skip their full tick. Attachment transitions and unsupported versions retain the full-tick fallback; render culling stays native. Four copied-client benchmark runs measured **2.77–3.37% higher FPS with hidden players**, with visible-scene means within 0.8% of the full-tick control. Functional checks covered moving and rotating decks, visible reentry, detachment and sublevel removal. See the [1.2.13 verification report](verification/sable-reduced-1.2.13/REPORT.md) for evidence and offline-test limitations.
 
 The reproduced 1.2.11 startup crash came from Entity Culling moving its helper class. The updated target is included here; 1.2.13 completed testing with Sable Player Ragdoll 0.8.1, Ragdoll Reactions 0.8.0 and RagRevival present. The supplied modpack was read-only throughout testing.
@@ -72,7 +76,7 @@ $env:JAVA_HOME = 'C:\Program Files\Java\jdk-21'
 
 The build reads compile-only mod dependencies from the existing instance's `mods` folder. For another instance, supply `-PinstanceMods=C:/path/to/mods`. If FirstPerson is absent there, supply `-PfirstPersonJar=C:/path/to/firstperson.jar` for compilation and tests only. Those installed mod jars are not bundled. MixinSquared 0.3.7 is included as a nested dependency for the narrow FirstPerson and Entity Culling handler integrations.
 
-The production artifact is `build/libs/emf-attachments-compat-1.21.1-1.2.13.jar`. The separate `test-harness` jar is for development only and must not be installed for ordinary play. Sable's nested companion API is extracted for compilation only and is not bundled in the production artifact.
+The production artifact is `build/libs/emf-attachments-compat-1.21.1-1.2.14.jar`. The separate `test-harness` jar is for development only and must not be installed for ordinary play. Sable's nested companion API is extracted for compilation only and is not bundled in the production artifact.
 
 ## Reproduce the runtime tests
 

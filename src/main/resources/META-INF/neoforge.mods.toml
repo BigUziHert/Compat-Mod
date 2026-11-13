@@ -4,7 +4,7 @@ license="MIT"
 
 [[mods]]
 modId="emfattachments"
-version="1.2.13"
+version="1.2.14"
 displayName="EMF Attachments Compat"
 description='''Accessory rendering, FirstPerson, Better Combat and Sable compatibility fixes. EMF and ETF are optional; EMF-specific animation fixes activate only when EMF is installed. Adds configurable accessory hiding and scaled body offsets without FPM x Compat.'''
 

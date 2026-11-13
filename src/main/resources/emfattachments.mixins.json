@@ -5,6 +5,7 @@
   "plugin": "dev.caleb.emfattachments.compat.OptionalMixinPlugin",
   "compatibilityLevel": "JAVA_21",
   "client": [
+    "AetherCapeLookupMixin",
     "ArtificeFirstPersonAccessoriesMixin",
     "ArtificeSixShooterGunHandMixin",
     "ArtificeSixShooterOffhandMixin",

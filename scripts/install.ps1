@@ -3,7 +3,7 @@ param([string]$Instance = 'C:\Users\caleb\curseforge\minecraft\Instances\Modded 
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 $mods = [IO.Path]::GetFullPath((Join-Path $Instance 'mods'))
-$jar = Join-Path $repo 'build\libs\emf-attachments-compat-1.21.1-1.2.13.jar'
+$jar = Join-Path $repo 'build\libs\emf-attachments-compat-1.21.1-1.2.14.jar'
 if (!(Test-Path -LiteralPath $jar)) { throw 'Build the production jar first.' }
 $backup = [IO.Path]::GetFullPath((Join-Path $repo ('.local\installation-backup-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))))
 New-Item -ItemType Directory -Force -Path $backup | Out-Null
