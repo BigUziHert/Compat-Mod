@@ -40,6 +40,9 @@ public final class SablePlayerOcclusion {
     };
 
     public static boolean keepsFullTick(boolean original, Entity entity) {
+        if (original) return true;
+        if (SableReducedPlayerTick.canReduce(entity)) return false;
+        if (SableReducedPlayerTick.needsTransitionTick(entity)) return true;
         return resolve(original, entity, SABLE);
     }
 

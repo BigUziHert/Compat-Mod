@@ -9,11 +9,12 @@ import org.joml.Vector3d;
 public final class SableFreshAnimationState {
     public final SableFreshAnimationHistory history = new SableFreshAnimationHistory();
     private SableFreshAnimationState firstPersonHandState;
-    private final Matrix4d interpolated = new Matrix4d();
-    private final Matrix4d currentPoseMatrix = new Matrix4d();
-    private final Matrix4d inverse = new Matrix4d();
-    private final Vector3d previousLocalPosition = new Vector3d();
-    private final Vector3d carriedPosition = new Vector3d();
+    // Core 2.4+ needs only the small history guard, never these legacy matrices.
+    private Matrix4d interpolated;
+    private Matrix4d currentPoseMatrix;
+    private Matrix4d inverse;
+    private Vector3d previousLocalPosition;
+    private Vector3d carriedPosition;
 
     /** EMF's hand map advances independently of the normal world/shadow map. */
     public SableFreshAnimationState forRenderContext(boolean firstPersonHand) {
@@ -32,6 +33,13 @@ public final class SableFreshAnimationState {
     public double sampleOwnVerticalMotion(Pose3dc previousPose, Pose3dc currentPose,
                             double previousX, double previousY, double previousZ,
                             double currentX, double currentY, double currentZ, float partialTick) {
+        if (interpolated == null) {
+            interpolated = new Matrix4d();
+            currentPoseMatrix = new Matrix4d();
+            inverse = new Matrix4d();
+            previousLocalPosition = new Vector3d();
+            carriedPosition = new Vector3d();
+        }
         previousPose.bakeIntoMatrix(interpolated);
         currentPose.bakeIntoMatrix(currentPoseMatrix);
         // EMF interpolates the entity's tick endpoints linearly. Use the same interpolation

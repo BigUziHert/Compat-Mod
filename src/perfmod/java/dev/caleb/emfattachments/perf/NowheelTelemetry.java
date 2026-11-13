@@ -1,7 +1,7 @@
 package dev.caleb.emfattachments.perf;
 
 import dev.tr7zw.entityculling.EntityCullingModBase;
-import dev.tr7zw.entityculling.NMSCullingHelper;
+import dev.tr7zw.entityculling.util.NMSCullingHelper;
 import dev.tr7zw.entityculling.access.Cullable;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;

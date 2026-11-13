@@ -14,5 +14,6 @@ public abstract class SableOcclusionTickProbeMixin {
         // Outside the method body: cancellable HEAD injections cannot skip this control.
         SableOcclusionSequence.beforeTick(entity);
         original.call(entity);
+        SableOcclusionSequence.afterTick(entity);
     }
 }

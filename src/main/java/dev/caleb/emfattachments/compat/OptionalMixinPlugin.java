@@ -66,6 +66,11 @@ public final class OptionalMixinPlugin implements IMixinConfigPlugin {
         if (mixinClassName.endsWith(".SablePlayerEntityCullingMixin")) {
             return modPresent("sable") && modPresent("entityculling");
         }
+        if (mixinClassName.endsWith(".SableReducedTickAccessMixin")
+                || mixinClassName.endsWith(".SablePlayerReducedTickMixin")) {
+            return modPresent("sable") && modPresent("entityculling")
+                    && SableReducedTickLinker.supported(versionAtLeast);
+        }
         if (mixinClassName.endsWith(".SableSleepingRotationMixin")
                 || mixinClassName.endsWith(".SableSleepingNameTagMixin")) {
             return modPresent("sable");
@@ -74,6 +79,8 @@ public final class OptionalMixinPlugin implements IMixinConfigPlugin {
                 || mixinClassName.endsWith(".SableFreshAnimationPlayerMixin")
                 || mixinClassName.endsWith(".SableFreshAsmEvaluationMixin")
                 || mixinClassName.endsWith(".SableFreshInterpreterEvaluationMixin")) {
+            // Core 2.4+ owns deck motion; these evaluation/context hooks still
+            // protect Fresh against a one-float rounding step in Core's input.
             return modPresent("sable") && modPresent("entity_model_features");
         }
         if (mixinClassName.endsWith(".FirstPersonArmScopeMixin")
@@ -218,5 +225,14 @@ public final class OptionalMixinPlugin implements IMixinConfigPlugin {
     @Override public void preApply(String targetClassName, ClassNode targetClass, String mixinClassName,
                                    IMixinInfo mixinInfo) {}
     @Override public void postApply(String targetClassName, ClassNode targetClass, String mixinClassName,
-                                    IMixinInfo mixinInfo) {}
+                                    IMixinInfo mixinInfo) {
+        if (mixinClassName.endsWith(".SableReducedTickAccessMixin")) {
+            var logger = org.slf4j.LoggerFactory.getLogger("emfattachments");
+            if (SableReducedTickLinker.link(targetClass)) {
+                logger.info("Linked native Sable reduced-tick maintenance; full-tick control: emfattachments.sableFullTicks");
+            } else {
+                logger.warn("Could not link native Sable reduced-tick maintenance; preserving full player ticks");
+            }
+        }
+    }
 }

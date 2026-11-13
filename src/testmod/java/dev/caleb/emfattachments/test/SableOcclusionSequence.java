@@ -11,7 +11,7 @@ import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import dev.ryanhcode.sable.sublevel.storage.SubLevelRemovalReason;
 import dev.tr7zw.entityculling.EntityCullingModBase;
-import dev.tr7zw.entityculling.NMSCullingHelper;
+import dev.tr7zw.entityculling.util.NMSCullingHelper;
 import dev.tr7zw.entityculling.access.Cullable;
 import dev.tr7zw.entityculling.versionless.EntityCullingVersionlessBase;
 import java.nio.charset.StandardCharsets;
@@ -37,6 +37,7 @@ import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.resources.PlayerSkin;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.player.PlayerModelPart;
@@ -121,8 +122,15 @@ public final class SableOcclusionSequence {
         if (w == null) return;
         s.forceFlags(w);
         w.tickAttempts++;
+        if (s.reducedTickAudit) s.beforeAuditedTick(w);
         if (w.firstTick == null) w.firstTick = s.state(w);
         if (NMSCullingHelper.ignoresCulling(entity)) w.exemptTicks++;
+    }
+
+    public static void afterTick(Entity entity) {
+        Session s = active;
+        Witness w = s == null || s.finishing || !s.sampling || !s.reducedTickAudit ? null : s.find(entity);
+        if (w != null) s.afterAuditedTick(w);
     }
 
     /** Entity.tick is absent from Entity Culling's replacement basicTick. */
@@ -185,6 +193,13 @@ public final class SableOcclusionSequence {
         int settledRenderAttempts, settledRendererReturns;
         int lastAnimationTick = -1;
         int firstRendererTick = -1, lastRendererTick = -1;
+        int aiSteps, packetUpdates, packetRemaining;
+        Vec3 packetTarget;
+        float packetYaw, packetPitch;
+        Map<String, Object> tickObservation;
+        Vec3 expectedWorld, expectedPlot;
+        Float expectedYaw, expectedPitch;
+        int beforeNativeTick, beforeAiSteps, beforeFullTicks;
         Map<String, Object> firstTick;
         Witness(Minecraft mc, Kind kind, int id, Vec3 position, Vec3 plotPosition) {
             super(mc.level, new GameProfile(UUID.randomUUID(), "Occlusion" + kind.ordinal()));
@@ -198,7 +213,8 @@ public final class SableOcclusionSequence {
         @Override public PlayerSkin getSkin() { return skin == null ? Minecraft.getInstance().player.getSkin() : skin; }
         @Override public PlayerTeam getTeam() { return team; }
         @Override public boolean isModelPartShown(PlayerModelPart part) { return true; }
-        void resetCounts() { tickAttempts = exemptTicks = fullTicks = renderAttempts = rendererReturns = hiddenSkinDecisions = visibleSkinDecisions = 0; settledRenderAttempts = settledRendererReturns = 0; firstTick = null; firstRendererTick = lastRendererTick = -1; }
+        @Override public void aiStep() { aiSteps++; super.aiStep(); }
+        void resetCounts() { tickAttempts = exemptTicks = fullTicks = renderAttempts = rendererReturns = hiddenSkinDecisions = visibleSkinDecisions = 0; settledRenderAttempts = settledRendererReturns = 0; aiSteps = packetUpdates = packetRemaining = 0; tickObservation = null; firstTick = null; firstRendererTick = lastRendererTick = -1; }
     }
 
     private static final class Session {
@@ -208,6 +224,7 @@ public final class SableOcclusionSequence {
         final net.minecraft.client.player.LocalPlayer local;
         final Path output;
         final boolean natural;
+        final boolean reducedTickAudit = Boolean.getBoolean("emfattachments.sableReducedTickAudit");
         final CameraType oldCamera;
         final Entity oldCameraEntity;
         final float oldYaw, oldPitch;
@@ -219,6 +236,7 @@ public final class SableOcclusionSequence {
         final Map<String, Object> report = new LinkedHashMap<>();
         final List<Map<String, Object>> stages = new ArrayList<>(), samples = new ArrayList<>(), screenshots = new ArrayList<>();
         final List<Map<String, Object>> animationSamples = new ArrayList<>();
+        final List<Map<String, Object>> tickObservations = new ArrayList<>();
         final Map<BlockPos, BlockState> wallBlocks = new LinkedHashMap<>();
         final long deadline = System.nanoTime() + 150_000_000_000L;
         volatile ServerSubLevel platform;
@@ -253,11 +271,17 @@ public final class SableOcclusionSequence {
                     ? "NATURAL_WALL: native Entity Culling worker traces a real opaque world wall while a real Sable platform translates and rotates. No cull or forced-visible flags are written by this mode. Owned remote clones model pending plot, tracked, ordinary, invisible and native-exempt cases; this is not a second network client."
                     : "INJECTED_CONTROL: deliberately force stale Entity Culling flags immediately before native tick/render decisions on owned client-only clones. This is not natural reproduction of the user's multiplayer invisibility.");
             report.put("naturalWorker", natural);
+            report.put("reducedTickAudit", reducedTickAudit);
+            report.put("fullTickControl", Boolean.getBoolean("emfattachments.sableFullTicks"));
             report.put("productionMixinsDisabled", Boolean.getBoolean("emfattachments.disable"));
             report.put("firstPersonInstalled", ModList.get().isLoaded("firstperson"));
             report.put("resourcePacks", mc.getResourcePackRepository().getSelectedIds());
             report.put("stages", stages); report.put("samples", samples); report.put("screenshots", screenshots);
             report.put("animationSamples", animationSamples);
+            if (reducedTickAudit) {
+                report.put("tickObservations", tickObservations);
+                report.put("packetFixture", "Owned remote clones receive lerpTo plus sable$plotLerpTo every 12 ticks, with three interpolation steps, alternating plot offsets and view rotations. This exercises native interpolation but not real packet transport.");
+            }
             report.put("limitations", List.of("No actual second client or multiplayer packet delivery; pending plot is seeded once through Sable's native entity extension.", natural ? "Native PhysicsPipeline trajectory, not Aeronautics propulsion." : "The occlusion result is injected, not generated by a natural wall trace.", "Native render returns do not alone prove visible pixels; skin RenderType decisions and screenshots are separate evidence."));
             report.put("renderTimeoutControl", "Entity Culling grants a one-second forced-visible timeout after clear flags. Settled render counters exclude the first 25 ticks of every stage.");
         }
@@ -354,7 +378,8 @@ public final class SableOcclusionSequence {
             if (stage >= 0 && stage <= 1) driveTicks++;
             var pipeline = SubLevelContainer.getContainer(platform.getLevel()).physicsSystem().getPipeline();
             pipeline.resetVelocity(platform);
-            pipeline.teleport(platform, new Vector3d(base.x + Math.min(driveTicks, 160) * .02, base.y, base.z), new Quaterniond());
+            pipeline.teleport(platform, new Vector3d(base.x + Math.min(driveTicks, 160) * .02, base.y, base.z),
+                    reducedTickAudit ? new Quaterniond().rotationYXZ(.12 * Math.sin(driveTicks * .035), 0, .025 * Math.sin(driveTicks * .045)) : new Quaterniond());
         }
 
         void tick() {
@@ -380,8 +405,10 @@ public final class SableOcclusionSequence {
                 removal.join();
                 if (SubLevelContainer.getContainer(level).getSubLevel(platformId) != null) return;
                 // Keep an explicit stale reference to the actually removed native sub-level for this control.
-                for (Witness w : witnesses) if (w.kind == Kind.ATTACHED || w.kind == Kind.PENDING_PLOT || w.kind == Kind.INVISIBLE_ATTACHED)
+                for (Witness w : witnesses) if (w.kind == Kind.ATTACHED || w.kind == Kind.PENDING_PLOT || w.kind == Kind.INVISIBLE_ATTACHED) {
                     ((EntityMovementExtension)(Object)w).sable$setTrackingSubLevel(clientDeck);
+                    if (reducedTickAudit) ((EntityStickExtension)(Object)w).sable$setPlotPosition(w.plotPosition);
+                }
                 removal = null;
                 report.put("removedControlReferenceActuallyRemoved", clientDeck.isRemoved());
                 witnesses.forEach(Witness::resetCounts);
@@ -487,9 +514,67 @@ public final class SableOcclusionSequence {
         void detachAll() {
             for (Witness w : witnesses) {
                 ((EntityStickExtension)(Object)w).sable$setPlotPosition(null);
-                ((EntityMovementExtension)(Object)w).sable$setTrackingSubLevel(null);
+                // A normal world movement packet clears plot state before Entity.tick
+                // clears the old tracking reference. Keep that transition observable.
+                if (!reducedTickAudit) ((EntityMovementExtension)(Object)w).sable$setTrackingSubLevel(null);
+                w.packetRemaining = 0;
             }
             boarded = false;
+        }
+
+        void beforeAuditedTick(Witness w) {
+            var stick = (EntityStickExtension)(Object)w;
+            Vec3 plot = stick.sable$getPlotPosition();
+            SubLevel support = plot == null ? null : dev.ryanhcode.sable.Sable.HELPER.getContaining(level, plot);
+            if (plot != null && support != null && !support.isRemoved() && w.tickAttempts % 12 == 1) {
+                double sign = w.packetUpdates % 2 == 0 ? 1 : -1;
+                w.packetTarget = w.plotPosition.add(.45 * sign, 0, .2 * sign);
+                w.packetYaw = (float)(180 + 24 * sign); w.packetPitch = (float)(8 * sign);
+                w.lerpTo(w.packetTarget.x, w.packetTarget.y, w.packetTarget.z, w.packetYaw, w.packetPitch, 3);
+                stick.sable$plotLerpTo(w.packetTarget, 3);
+                w.packetRemaining = 3; w.packetUpdates++;
+            }
+            w.beforeNativeTick = w.tickCount; w.beforeAiSteps = w.aiSteps; w.beforeFullTicks = w.fullTicks;
+            // Full Entity.tick projects the pre-aiStep plot point. aiStep then
+            // advances the plot history; comparing against that newer point
+            // would incorrectly label native one-step ordering as an error.
+            w.expectedWorld = support != null && !support.isRemoved() ? support.logicalPose().transformPosition(plot) : null;
+            w.expectedPlot = plot == null ? null : w.packetRemaining > 0 ? plot.lerp(w.packetTarget, 1.0 / w.packetRemaining) : plot;
+            w.expectedYaw = w.packetRemaining > 0 ? w.getYRot() + Mth.wrapDegrees(w.packetYaw - w.getYRot()) / w.packetRemaining : null;
+            w.expectedPitch = w.packetRemaining > 0 ? w.getXRot() + (w.packetPitch - w.getXRot()) / w.packetRemaining : null;
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("stage", stageName()); row.put("stageTick", stageTicks); row.put("kind", w.kind.name());
+            row.put("attempt", w.tickAttempts); row.put("packetUpdates", w.packetUpdates); row.put("packetStepsBefore", w.packetRemaining);
+            row.put("plotBefore", plot == null ? List.of() : vec(plot));
+            var tracked = ((EntityMovementExtension)(Object)w).sable$getTrackingSubLevel();
+            row.put("trackingBefore", tracked == null ? "" : tracked.getUniqueId().toString());
+            row.put("trackingRemovedBefore", tracked != null && tracked.isRemoved());
+            Cullable cull = (Cullable)(Object)w;
+            row.put("culledBefore", cull.isCulled()); row.put("outOfCameraBefore", cull.isOutOfCamera());
+            row.put("positionBefore", vec(w.position()));
+            if (w.expectedWorld != null) row.put("expectedWorld", vec(w.expectedWorld));
+            if (w.expectedPlot != null) row.put("expectedPlot", vec(w.expectedPlot));
+            w.tickObservation = row;
+        }
+
+        void afterAuditedTick(Witness w) {
+            Map<String, Object> row = w.tickObservation;
+            if (row == null) throw new IllegalStateException("Missing pre-tick observation");
+            row.put("nativeTickDelta", w.tickCount - w.beforeNativeTick);
+            row.put("aiStepDelta", w.aiSteps - w.beforeAiSteps);
+            row.put("fullEntityTickDelta", w.fullTicks - w.beforeFullTicks);
+            row.put("positionAfter", vec(w.position()));
+            Vec3 plot = ((EntityStickExtension)(Object)w).sable$getPlotPosition();
+            row.put("plotAfter", plot == null ? List.of() : vec(plot));
+            var tracked = ((EntityMovementExtension)(Object)w).sable$getTrackingSubLevel();
+            row.put("trackingAfter", tracked == null ? "" : tracked.getUniqueId().toString());
+            row.put("trackingRemovedAfter", tracked != null && tracked.isRemoved());
+            if (w.expectedWorld != null) row.put("projectionError", w.expectedWorld.distanceTo(w.position()));
+            if (w.expectedPlot != null && plot != null) row.put("plotInterpolationError", w.expectedPlot.distanceTo(plot));
+            if (w.expectedYaw != null) row.put("yawInterpolationError", Math.abs(Mth.wrapDegrees(w.getYRot() - w.expectedYaw)));
+            if (w.expectedPitch != null) row.put("pitchInterpolationError", Math.abs(w.getXRot() - w.expectedPitch));
+            if (w.packetRemaining > 0) w.packetRemaining--;
+            tickObservations.add(row); w.tickObservation = null;
         }
 
         boolean naturalScreenshotReady() {
@@ -527,6 +612,7 @@ public final class SableOcclusionSequence {
             Vec3 plot = ((EntityStickExtension)(Object)w).sable$getPlotPosition(); row.put("plotPosition", plot == null ? List.of() : vec(plot));
             if (plot != null && clientDeck != null && !clientDeck.isRemoved()) row.put("worldPositionError", clientDeck.logicalPose().transformPosition(plot).distanceTo(w.position()));
             row.put("tickAttempts", w.tickAttempts); row.put("fullEntityTicks", w.fullTicks); row.put("exemptTickDecisions", w.exemptTicks);
+            row.put("aiSteps", w.aiSteps); row.put("packetUpdates", w.packetUpdates);
             row.put("renderAttempts", w.renderAttempts); row.put("playerRendererReturns", w.rendererReturns);
             row.put("firstRendererTick", w.firstRendererTick); row.put("lastRendererTick", w.lastRendererTick);
             row.put("settledRenderAttempts", w.settledRenderAttempts); row.put("settledPlayerRendererReturns", w.settledRendererReturns);

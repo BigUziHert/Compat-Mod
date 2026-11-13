@@ -54,6 +54,13 @@ public final class AttachmentTestMod {
             NeoForge.EVENT_BUS.addListener(AttachmentTestMod::tick);
             return;
         }
+        if (Boolean.getBoolean("emfattachments.sableAuditOnly")) {
+            NativeWorldReadiness.register();
+            if (net.neoforged.fml.ModList.get().isLoaded("sable")
+                    && net.neoforged.fml.ModList.get().isLoaded("entityculling")) SableOcclusionSequence.register();
+            NeoForge.EVENT_BUS.addListener(AttachmentTestMod::tick);
+            return;
+        }
         if (net.neoforged.fml.ModList.get().isLoaded("irons_artifice")
                 && net.neoforged.fml.ModList.get().isLoaded("accessories")
                 && net.neoforged.fml.ModList.get().isLoaded("combat_roll")) ArtificeLifecycleSequence.register();
@@ -130,6 +137,8 @@ public final class AttachmentTestMod {
                     + " | " + mc.gameDirectory.toPath().toAbsolutePath().normalize());
             namedTestWindow = true;
         }
+        if (Boolean.getBoolean("emfattachments.sableAuditOnly")
+                && !Boolean.getBoolean("emfattachments.artificeOnly")) return;
         if (mc.level == null || mc.player == null || mc.screen instanceof SweepScreen) { readyTicks = 0; return; }
         if (++readyTicks < 40) return;
         Path trigger = mc.gameDirectory.toPath().resolve("emfattachments-test-start.txt");

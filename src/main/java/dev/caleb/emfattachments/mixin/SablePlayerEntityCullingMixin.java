@@ -17,9 +17,13 @@ public abstract class SablePlayerEntityCullingMixin {
     // Sable requires the normal Entity.tick return hook to consume pending plot
     // positions; Entity Culling's reduced basicTick does not execute that hook.
     @TargetHandler(mixin = "dev.tr7zw.entityculling.mixin.ClientWorldMixin", name = "tickEntity")
-    @ModifyExpressionValue(method = "@MixinSquared:Handler", at = @At(value = "INVOKE",
+    // Entity Culling 1.12 moved the helper into util; match either release's
+    // single tick invocation while retaining the strict injection count.
+    @ModifyExpressionValue(method = "@MixinSquared:Handler", at = {@At(value = "INVOKE",
             target = "Ldev/tr7zw/entityculling/NMSCullingHelper;ignoresCulling(Lnet/minecraft/world/entity/Entity;)Z",
-            remap = false), require = 1, expect = 1, allow = 1)
+            remap = false), @At(value = "INVOKE",
+            target = "Ldev/tr7zw/entityculling/util/NMSCullingHelper;ignoresCulling(Lnet/minecraft/world/entity/Entity;)Z",
+            remap = false)}, require = 1, expect = 1, allow = 1)
     private boolean emfattachments$keepSubLevelPlayersTicking(boolean original,
                                                             @Local(argsOnly = true) Entity entity) {
         return SablePlayerOcclusion.keepsFullTick(original, entity);

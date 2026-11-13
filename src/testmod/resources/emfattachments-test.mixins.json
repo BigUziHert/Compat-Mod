@@ -5,6 +5,11 @@
   "plugin": "dev.caleb.emfattachments.test.TestOptionalMixinPlugin",
   "compatibilityLevel": "JAVA_21",
   "client": [
+    "OverlapCombatTransformProbeMixin",
+    "OverlapCombatPalProbeMixin",
+    "OverlapCombatCoreProbeMixin",
+    "OverlapCrouchLegacyControlMixin",
+    "OverlapArtificePoseControlMixin",
     "ArtificeHandProbeMixin",
     "ArtificeEmfProbeMixin",
     "ArtificeRagdollAccessoriesProbeMixin",

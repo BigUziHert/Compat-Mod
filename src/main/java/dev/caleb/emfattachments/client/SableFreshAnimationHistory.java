@@ -53,6 +53,38 @@ public final class SableFreshAnimationHistory {
         previouslyGrounded = grounded;
     }
 
+    /** Aligns a one-float downward rounding change after upstream has already removed deck motion. */
+    public void updateUpstreamHeight(Map<String, Float> currentVariables, Object currentSupport,
+                                     float frame, float upstreamY, boolean grounded) {
+        if (currentSupport == null || !Float.isFinite(frame) || !Float.isFinite(upstreamY)
+                || !currentVariables.containsKey(PREVIOUS_Y) || !currentVariables.containsKey(DRAGGED_Y)) {
+            reset();
+            return;
+        }
+        if (isDuplicate(currentVariables, currentSupport, frame)) return;
+        float previousY = read(currentVariables, PREVIOUS_Y);
+        float draggedY = read(currentVariables, DRAGGED_Y);
+        if (!Float.isFinite(previousY) || !Float.isFinite(draggedY)) {
+            reset();
+            return;
+        }
+        if (support == currentSupport && variables == currentVariables && grounded && previouslyGrounded
+                && Math.nextDown(previousY) == upstreamY
+                // At extreme heights a single float step can represent meaningful player movement.
+                && previousY - upstreamY <= 0.0001f) {
+            float movedDraggedY = upstreamY + (draggedY - previousY);
+            if (Float.isFinite(movedDraggedY)) {
+                write(currentVariables, PREVIOUS_Y, upstreamY);
+                write(currentVariables, DRAGGED_Y, movedDraggedY);
+            }
+        }
+        // Attachment, real movement, and the first grounded sample retain Fresh's native history.
+        support = currentSupport;
+        variables = currentVariables;
+        lastFrame = frame;
+        previouslyGrounded = grounded;
+    }
+
     public boolean isDuplicate(Map<String, Float> currentVariables, Object currentSupport, float frame) {
         return support == currentSupport && variables == currentVariables && lastFrame == frame;
     }

@@ -13,6 +13,16 @@ public final class TestOptionalMixinPlugin implements IMixinConfigPlugin {
         return FMLLoader.getLoadingModList().getModFileById(id) != null;
     }
     @Override public boolean shouldApplyMixin(String target, String mixin) {
+        if (Boolean.getBoolean("emfattachments.sableAuditOnly")
+                && !Boolean.getBoolean("emfattachments.artificeOnly")) {
+            return mixin.endsWith(".NativeWorldReadinessMixin")
+                    || mixin.contains("SableOcclusion") && loaded("sable") && loaded("entityculling");
+        }
+        if (mixin.contains("OverlapArtifice")) return Boolean.getBoolean("emfattachments.overlapGunBypass")
+                && loaded("emfattachments") && loaded("irons_artifice");
+        if (mixin.contains("Overlap")) return Boolean.getBoolean("emfattachments.overlapAudit")
+                && loaded("emfattachments") && loaded("firstperson") && loaded("bettercombat")
+                && loaded("playeranimator") && loaded("emf_compat_core") && loaded("entity_model_features");
         if (Boolean.getBoolean("emfattachments.artificeOnly") && !mixin.contains("Artifice")
                 && !mixin.contains("NativeHandAccessory")) return mixin.endsWith(".NativeWorldReadinessMixin");
         if (mixin.contains("ArtificeBodyMask")) return loaded("emfattachments") && loaded("firstperson") && loaded("irons_artifice");

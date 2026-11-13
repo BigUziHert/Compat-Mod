@@ -1,4 +1,66 @@
-# Version 1.2.10 verification record
+# Version 1.2.13 verification record
+
+## Mod update follow-up — 2026-11-12
+
+Version 1.2.13 fixes the moved Entity Culling helper target and permits reduced ticks for stable remote Sable attachments with the verified Sable 2.0.6 / Entity Culling 1.12.0 pair. Missing or unverified native bridges retain the historical full-tick fallback. The comparison uses the same candidate jar in both modes; `-Demfattachments.sableFullTicks=true` selects the full-tick control. This is a client tick change; Sable's native movement callbacks and Entity Culling's render decisions remain in use.
+
+The combined build passes **186 unit tests**, with main, developer harness and performance sources compiled against the updated mod set. Bytecode contracts cover both Entity Culling helper locations, the reduced tick's bookkeeping/interpolation order, the native Sable callback signatures, conservative version gates and bridge failure fallbacks. A disposable 1.2.11 startup reproduced the old required injection's zero-match failure with Ragdoll Revival omitted. The 1.2.13 candidate loads the complete updated set with Ragdoll Revival retained and completes the functional and performance runs.
+
+| Check | Result and scope |
+| --- | --- |
+| Natural culling and injected stale-cull comparisons | **13,980 total observations**, 6,990 in each mode: 5,295 natural and 1,695 injected-cull observations per mode. Both comparisons pass, including movement/interpolation, visible reentry, pending attachments, detachment, removed supports, native exemptions and fixture restoration. Stable hidden players use reduced ticks; interpolation and tick-count advancement occur once. |
+| Actual runtime weaving | **Nine structural checks passed** against fresh exported classes. The maintenance bridge calls the same three Sable callbacks in native order. The reduced-tick hook has one caller, inside Entity Culling's `basicTick` immediately before the single virtual `aiStep`. Normal full-tick hooks remain once each, and render culling is unchanged. |
+| Matched performance comparison | **Four valid JVM runs**, two per mode, with an independent review of run identity and raw evidence. Each run measures eight and 24 equipped players in visible and wall-occluded moving-deck scenes. |
+| Visual inspection | **Nine natural-scene PNGs and all 16 performance PNGs** reviewed. Numerical tick/position checks and image inspection are separate evidence; render counters alone do not establish visual correctness. |
+
+The following values are the median of the two per-run mean FPS measurements in each mode:
+
+| Scene | Full ticks | Reduced ticks | Change |
+| --- | ---: | ---: | ---: |
+| 8 visible equipped players | 144.23 | 143.20 | -0.72% |
+| 24 visible equipped players | 71.35 | 71.37 | +0.03% |
+| 8 hidden equipped players | 296.44 | 304.65 | +2.77% |
+| 24 hidden equipped players | 271.09 | 280.23 | +3.37% |
+
+These are modest improvements in the hidden-player scenes; two repeats per mode do not establish a universal FPS gain. The fixture uses offline client-only `RemotePlayer` clones, packet-like interpolation targets and a real Sable platform in an integrated-server world. It does not reproduce independent multiplayer clients, network delivery, or Ragdoll Revival gameplay. Full-tick-only behavior from every other installed mod on the first visible reentry frame is outside this focused coverage.
+
+The [1.2.13 verification report](verification/sable-reduced-1.2.13/REPORT.md) records the candidate and detailed results. Raw comparisons are under `.local/sable-reduced-tick-20261112/`: `natural-comparison.json`, `injected-comparison.json`, `performance-comparison.json`, `performance-independent-review.json` and `woven-scope-r1.json`. The supplied CurseForge instance remained read-only: **1,305 hashed source-pack files are unchanged**, and the candidate was not installed. All gameplay work ran in disposable repository-local clients.
+
+# Historical version 1.2.12 verification record
+
+## Initial static mod update audit — 2026-11-12
+
+With installed Ragdoll Reactions 0.8.0, Sable Player Ragdoll 0.8.1 and Entity Culling 1.12.0, the updated source passes **179 tests**, with zero failures, errors or skips. Two new tests compare the compiled tick injection targets with actual 1.12.0 and archived 1.11.3 callback bytecode, requiring exactly one match. Main sources, the test harness and all performance sources compile against the updated pack. The harness/performance compilation initially reproduced the moved-helper import failure and passes after the import correction.
+
+The initial production candidate was `build/update-audit-20261112/libs/emf-attachments-compat-1.21.1-1.2.12.jar`; the separately named test-harness artifact is for development only. That static audit preserved the earlier `build/libs` artifacts and the user's installed 1.2.11 jar. It did not include a new game startup, visual/gameplay test, installation or push. Subsequent runtime and reduced-tick results belong to the 1.2.13 record above; the earlier runtime results below apply to their recorded artifacts. Local dependency hashes and test counts for this initial stage are in `.local/update-audit-20261112/checks.json`.
+
+## November 11 overlap verification
+
+The November 11 overlap follow-up removes our added crouched-combat Y offset whenever the verified Core 2.3.2+ crouch normalizer is active. For Core 2.4.0+, it replaces our full Sable motion correction with a narrow Fresh history precision guard. Core absence, older versions and live feature/global switches are covered by fallback/linkage tests.
+
+`build testModJar` passes **177 tests**, with zero failures, errors or skips. Thirty-four new tests execute installed Core/Better Combat/PlayerAnimator instructions, exercise optional API guards, and check the narrow precision behavior and absence of legacy matrix allocation on that path. Combat tests show that Core cancels the extra Y offset, but does not replace our root/torso rotation correction. Gun tests show that Core has no native Artifice pose producer and that its generic restoration differs in offset, visibility, body-follow and reload timing. They also reproduce Core's shared interpolation history across views. The bytecode tests control environment inputs; they do not claim pixel equivalence or FPS results. [Build evidence](verification/overlap-audit-1.2.12/final-r1/build.json)
+
+The final isolated updated-suite client completes **22 native combat cases**, **88 captures** and **1,550 matching local-body/PAL/Core render observations**, with settings restored and no test failures. The [matrix analysis](verification/overlap-audit-1.2.12/final-r1/combat-matrix-analysis.json) observes the old added Y offset becoming zero after Core, the candidate adding no offset, and the fallback remaining active with Core's global or crouch switch off. A root-rotation bypass remains visibly and numerically different after Core, supporting retention of that correction. Separate attacks are sampled at their native frame times; this is not a pixel-equality comparison. Missing-Core linkage is tested in the Java suite, rather than a separate live client in this follow-up.
+
+The [three-way Sable comparison](verification/overlap-audit-1.2.12/sable-three-way-comparison.json) explains why the full 1.2.11 handoff was narrowed. With identical upstream jars and packs, disabling every history helper reproduced one local landing pulse at descent onset. The old full helper prevented it. The final precision-only path also prevents it, while recording **zero legacy deck-motion helper calls**. Its unchanged [52 telemetry checks](verification/overlap-audit-1.2.12/sable-final-telemetry-review.json) pass across **3,076 frames**, including genuine crouch/jump/landing controls and restoration. [Six selected original images](verification/overlap-audit-1.2.12/final-r1/sable-selected-visual-review.json) were reviewed separately; screenshots start after the short onset interval, so native render telemetry establishes that particular fix.
+
+This Sable fixture uses third-person front, shaders, FirstPerson and a client-only remote player on a real Sable platform. It does not certify multiplayer packets, native hand rendering without FirstPerson, walking on a tilted deck, stairs or seated support transitions. The final jar is `emf-attachments-compat-1.21.1-1.2.12.jar`, SHA-256 `80c27d11a6948d4b5ac1a59ed68d474d99850fb3ae594bb8832bacf403094a72`. The user's installed mods are unchanged; this build has not been installed or pushed.
+
+The [selected combat image review](verification/overlap-audit-1.2.12/final-r1/combat-selected-visual-review.json) identifies the intentionally bad `tilt_off` capture separately: its torso clips into the camera. That expected negative control supports keeping our tilt correction; it is not an accepted production result. The candidate captures retain the correction. The isolated client exited cleanly with no crash report; the one missing-class log diagnostic concerns optional Fernflower debug decompilation, not a failed game integration. [Final checks](verification/overlap-audit-1.2.12/final-r1/final-checks.json)
+
+# Historical version 1.2.11 verification record
+
+The EMF Compat Core 2.4.0 update owns Sable's animation-height correction. Version 1.2.11 skips all four legacy `SableFresh*` mixins when Core 2.4.0 or newer is discovered; the fallback remains available with older or absent Core. The [upstream audit](COMPATIBILITY.md#emf-compat-update-audit--2026-11-09) records the release and source comparisons.
+
+`build testModJar` passes **143 unit tests**, with zero failures, errors or skips. FirstPerson 2.7.3 was supplied as a compile-only dependency from an existing disposable client because it is absent from the installed pack. The five new gate tests cover absent/2.3.2/2.4.0/2.4.1/2.10.0/3.0.0 Core, missing Sable or EMF, global disable and continued availability of unrelated integrations. [Build evidence](verification/emf-update-1.2.11/build.json)
+
+Core's published 2.3.2 and 2.4.0 `PoseInterpolator`/`PartFade` classes are byte-identical, preserving the strict eight-field-read injection contract. The NEA bridge's published 1.2.1 and 1.2.2 jars have identical class contents. These checks justify retaining our first-person interpolation and NEA corrections; they do not certify all gameplay after the update. Historical Sable animation results below exercised our fallback, not Core 2.4.0's new height implementation.
+
+The final production jar passes an isolated [four-view rendering smoke test](verification/optional-emf-1.2.11/emf-update-1-2-11-r1/optional-smoke.json): **1,201 world frames** with Core 2.4.0, Better Combat bridge 2.1.2, Carry On bridge 2.2.0, Create bridge 2.1.1, NEA bridge 1.2.2, Supplementaries bridge 1.1.2 and FirstPerson 2.7.3. The client exits cleanly with no crash report, fatal log entry or event-handler failure. [Collection checks](verification/optional-emf-1.2.11/emf-update-1-2-11-r1/collection.json)
+
+[Mixin/export verification](verification/optional-emf-1.2.11/emf-update-1-2-11-r1/mixin-verification.json) confirms that all four legacy Sable height mixins are absent, the player has no legacy height storage, Core's steady-height hook is applied, and the separate sleeping/culling/combat/NEA hooks remain. The transformed interpolator contains all eight first-person history calls. This verifies discovery, transformation and ordinary-world rendering, not moving/tilted-deck animation quality or combat behavior. The installed pack, its configuration and user saves were not changed; 1.2.11 is built for installation separately.
+
+# Historical version 1.2.10 verification record
 
 The six-shooter uses the gun hand for reload and fire in both views. The build passes 138 unit tests. Sixteen in-game scenarios cover both dominant hands, first and third person, sprint reload, recoil, ammunition and projectile spawning. The flintlock and musket serve as two-hand reload controls. The same production jar passed with FirstPerson, EMF and Fresh Player enabled and with those rendering mods and packs removed. [Screenshots and verification](verification/artifice-1.2.10/REPORT.md)
 
@@ -55,9 +117,15 @@ Three fresh offline clients pass the [optional-dependency smoke checks](verifica
 
 The focused sleeping-bed comparison is recorded in [the 1.2.7 report](verification/sleeping-1.2.7/REPORT.md). Its separate developer trigger is `emfattachments-sable-sleep.txt`, containing a run label. It uses real Sable plot beds, native server sleep, body-orientation witnesses and actual accessory vertex counts, with original screenshots for visual review.
 
-The final production build passes **92 unit tests**. Paired runtime runs with FirstPerson physically present and absent complete twelve scenarios each, producing **48 final original captures**, 152 body-orientation samples and 56 name-tag samples. Head filtering, non-head visibility, third-person goggles and actual Iris shadow preservation pass the recorded checks. Historical rejected candidate and fixture attempts remain in the evidence; only the two completed r3 runs are final paired release evidence. No new FPS benchmark is claimed, and the existing Sable Entity Culling class is unchanged.
+The final production build passes **92 unit tests**. Paired runtime runs with FirstPerson physically present and absent complete twelve scenarios each, producing **48 final original captures**, 152 body-orientation samples and 56 name-tag samples. Head filtering, non-head visibility, third-person goggles and actual Iris shadow preservation pass the recorded checks. Historical rejected candidate and fixture attempts remain in the evidence; only the two completed r3 runs are final paired release evidence. That sleeping verification did not include FPS measurements; the separate October 27 performance comparison is recorded below. The existing Sable Entity Culling class is unchanged.
 
 Version 1.2.7 is installed with the same production bytes used by both final runs. [Installation verification](verification/sleeping-1.2.7/installation.json) confirms that only our production jar was replaced and FirstPerson remains absent. A Minecraft restart is required to load the update.
+
+## Focused performance comparison — October 27
+
+[The 1.2.7 performance report](verification/performance-1.2.7/REPORT.md) records six fresh-process runs with physical jar removal: 60 timed scenes, 334,915 frame intervals and 1,202.56 measured seconds. It covers ordinary ground, first/rear-third-person transitions, a moving Sable deck, untracked nearby views and a 24-player equipped crowd, with shader-on repeats and a shader-disabled diagnostic pair. FirstPerson is physically absent.
+
+Shader-on third-person averages were 293.63 FPS removed versus 288.78 installed on the solo deck (−1.65%), and 52.87 versus 50.64 in the crowded deck scene (−4.21%). Large hitches also occurred with the jar removed. Repeat ranges, tails and timing before/after camera activation are documented; this does not establish a cause for the pauses observed in this test workload or certify the user's exact multiplayer/complex-ship scene. Production code and the user's installed files were unchanged.
 
 ## Historical version 1.2.6 verification
 

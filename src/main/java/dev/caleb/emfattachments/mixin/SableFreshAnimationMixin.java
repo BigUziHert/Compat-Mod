@@ -1,6 +1,7 @@
 package dev.caleb.emfattachments.mixin;
 
 import dev.caleb.emfattachments.client.SableFreshAnimationState;
+import dev.caleb.emfattachments.compat.EmfSableCompatibility;
 import dev.ryanhcode.sable.Sable;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import net.minecraft.client.Minecraft;
@@ -34,14 +35,24 @@ public abstract class SableFreshAnimationMixin implements SableFreshAnimationSta
         float frame = EMFState.getFrameCounter();
         if (EMFMath.getEntityVariable("var.frame_counter_prev", Float.NaN) == frame) return;
         SubLevel support = player.isPassenger() ? null : Sable.HELPER.getTrackingSubLevel(player);
-        boolean active = support != null && !support.isRemoved();
+        boolean upstreamHeight = EmfSableCompatibility.hasSteadyHeight();
+        boolean active = support != null && !support.isRemoved()
+                && (!upstreamHeight || EmfSableCompatibility.steadyHeightEnabled());
         SableFreshAnimationState state = access.emfattachments$getSableFreshAnimationState(active);
         if (state == null) return;
         if (!active) {
             state.resetRenderContexts();
             return;
         }
-        state.forRenderContext(emf.isFirstPersonHand()).update(emf.variableMap(), support, frame, EMFMath.getEntityY(), player.onGround(), support.lastPose(), support.logicalPose(),
-                player.xo, player.yo, player.zo, player.getX(), player.getY(), player.getZ(), EMFMath.getTickDelta());
+        var context = state.forRenderContext(emf.isFirstPersonHand());
+        float animationY = EMFMath.getEntityY();
+        if (upstreamHeight) {
+            // Core owns deck movement. Only protect Fresh's history against the
+            // observed one-float downward rounding step in its corrected input.
+            context.history.updateUpstreamHeight(emf.variableMap(), support, frame, animationY, player.onGround());
+        } else {
+            context.update(emf.variableMap(), support, frame, animationY, player.onGround(), support.lastPose(), support.logicalPose(),
+                    player.xo, player.yo, player.zo, player.getX(), player.getY(), player.getZ(), EMFMath.getTickDelta());
+        }
     }
 }

@@ -1,6 +1,7 @@
 package dev.caleb.emfattachments.mixin;
 
 import dev.caleb.emfattachments.client.FirstPersonCombat;
+import dev.caleb.emfattachments.compat.EmfCrouchCompatibility;
 import dev.caleb.emfattachments.config.CompatConfig;
 import dev.kosmx.playerAnim.api.TransformType;
 import dev.kosmx.playerAnim.api.firstPerson.FirstPersonMode;
@@ -42,7 +43,11 @@ public abstract class FirstPersonCombatAnimationMixin {
             if (type == TransformType.ROTATION) cir.setReturnValue(new Vec3f(current.getX() * (1 - weight), current.getY(), current.getZ() * (1 - weight)));
             else if (type == TransformType.POSITION) {
                 // The root channel is measured in blocks, unlike model parts.
-                cir.setReturnValue(current.scale(1 - weight).add(new Vec3f(0, player.isCrouching() ? (float) CompatConfig.combatBodyYOffset() * weight : 0, 0)));
+                // Core's active crouch normalizer owns this vertical correction.
+                // Keep our fallback when Core is absent or its normalizer is off.
+                float crouchOffset = player.isCrouching() && !EmfCrouchCompatibility.ownsCrouchHeight()
+                        ? (float) CompatConfig.combatBodyYOffset() * weight : 0;
+                cir.setReturnValue(current.scale(1 - weight).add(new Vec3f(0, crouchOffset, 0)));
             } else if (type == TransformType.BEND) cir.setReturnValue(current.scale(1 - weight));
         } else if (part.equals("torso")) {
             if (type == TransformType.ROTATION) cir.setReturnValue(new Vec3f(current.getX() * (1 - weight), current.getY(), current.getZ() * (1 - weight)));

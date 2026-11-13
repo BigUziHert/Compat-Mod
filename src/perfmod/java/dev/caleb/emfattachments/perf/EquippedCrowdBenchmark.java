@@ -68,6 +68,13 @@ import org.joml.Vector3d;
 public final class EquippedCrowdBenchmark {
     private static final UUID OFFLINE_ID = UUID.nameUUIDFromBytes("OfflinePlayer:AttachmentTest".getBytes(StandardCharsets.UTF_8));
     private static final boolean IRIS = ModList.get().isLoaded("iris");
+    private static final boolean SABLE_REDUCED_BENCHMARK = Boolean.getBoolean("emfattachments.sableReducedBenchmark");
+    private static final Scene[] SABLE_REDUCED_SCENES = {
+            new Scene("deck-open-8", 8, true, true, false, 18),
+            new Scene("deck-open-24", 24, true, true, false, 18),
+            new Scene("deck-occluded-8", 8, true, true, true, 18),
+            new Scene("deck-occluded-24", 24, true, true, true, 18)
+    };
     private static final Scene[] SCENES = {
             new Scene("local-lookdown-80", 0, false, false, false, 80),
             new Scene("world-idle-8", 8, false, false, false, 18),
@@ -77,6 +84,19 @@ public final class EquippedCrowdBenchmark {
             new Scene("deck-walk-8", 8, true, true, false, 18),
             new Scene("deck-walk-24", 24, true, true, false, 18),
             new Scene("deck-occluded-walk-8", 8, true, true, true, 18)
+    };
+    private static final Scene[] PERSPECTIVE_SCENES = {
+            new Scene("world-first", 0, false, false, false, 18),
+            new Scene("world-switches", 0, false, false, false, 18, false, CameraType.FIRST_PERSON, true),
+            new Scene("world-third", 0, false, false, false, 18, false, CameraType.THIRD_PERSON_BACK, false),
+            new Scene("world-crowd-third-24", 24, true, false, false, 18, false, CameraType.THIRD_PERSON_BACK, false),
+            new Scene("deck-first", 0, false, true, false, 18),
+            new Scene("deck-switches", 0, false, true, false, 18, false, CameraType.FIRST_PERSON, true),
+            new Scene("deck-third", 0, false, true, false, 18, false, CameraType.THIRD_PERSON_BACK, false),
+            new Scene("deck-crowd-first-24", 24, true, true, false, 18),
+            new Scene("deck-crowd-third-24", 24, true, true, false, 18, false, CameraType.THIRD_PERSON_BACK, false),
+            new Scene("near-deck-first", 0, false, false, false, -25, true, CameraType.FIRST_PERSON, false),
+            new Scene("near-deck-third", 0, false, false, false, -25, true, CameraType.THIRD_PERSON_BACK, false)
     };
     private static volatile Session active;
     private static int polls, nativeFrames;
@@ -144,7 +164,9 @@ public final class EquippedCrowdBenchmark {
             String label = (lines.isEmpty() ? "equipped-crowd" : lines.getFirst()).trim().replaceAll("[^a-zA-Z0-9._-]", "_");
             if (label.isBlank() || label.equals(".") || label.equals("..")) throw new IllegalArgumentException("Invalid run label");
             int warmup = 10, measure = 20;
-            boolean cleanupOnly = false, nowheelComparison = false, visibilityProbe = false, probeOnly = false;
+            boolean cleanupOnly = false, nowheelComparison = false, visibilityProbe = false, probeOnly = false, perspectiveComparison = false;
+            String perspectiveSceneFilter = ".*";
+            boolean perspectiveIncludeGroundCrowd = false;
             for (String line : lines) {
                 if (line.startsWith("warmupSeconds=")) warmup = Integer.parseInt(line.substring(14).trim());
                 if (line.startsWith("measureSeconds=")) measure = Integer.parseInt(line.substring(15).trim());
@@ -152,13 +174,19 @@ public final class EquippedCrowdBenchmark {
                 if (line.equals("comparison=nowheel")) nowheelComparison = true;
                 if (line.equals("visibilityProbe=true")) visibilityProbe = true;
                 if (line.equals("probeOnly=true")) probeOnly = true;
+                if (line.equals("perspectiveComparison=true")) perspectiveComparison = true;
+                if (line.startsWith("perspectiveSceneFilter=")) perspectiveSceneFilter = line.substring(23).trim();
+                if (line.equals("perspectiveIncludeGroundCrowd=true")) perspectiveIncludeGroundCrowd = true;
             }
             if (warmup < 5 || warmup > 60 || measure < 5 || measure > 60) throw new IllegalArgumentException("Durations must be 5..60 seconds");
             output = mc.gameDirectory.toPath().resolve("emfattachments-tests").resolve(label);
             if (Files.exists(output.resolve("equipped-crowd-frames.json"))) throw new IllegalArgumentException("Refusing to replace an existing benchmark report");
             Files.createDirectories(output); Files.delete(trigger);
             if ((visibilityProbe || probeOnly) && !nowheelComparison) throw new IllegalArgumentException("Comparison probes require comparison=nowheel");
-            Session next = new Session(mc, output, label, warmup, measure, cleanupOnly, nowheelComparison, visibilityProbe || probeOnly, probeOnly);
+            if (perspectiveComparison && (cleanupOnly || nowheelComparison || visibilityProbe || probeOnly))
+                throw new IllegalArgumentException("Perspective suite cannot be combined with historical comparison/probe modes");
+            Session next = new Session(mc, output, label, warmup, measure, cleanupOnly, nowheelComparison, visibilityProbe || probeOnly, probeOnly,
+                    perspectiveComparison, perspectiveSceneFilter, perspectiveIncludeGroundCrowd);
             active = next; next.prepare();
         } catch (Throwable failure) {
             if (active != null) active.finish("FAIL", describe(failure));
@@ -178,7 +206,7 @@ public final class EquippedCrowdBenchmark {
 
     private static void preFrame(RenderFrameEvent.Pre event) {
         Session s = active;
-        if (s != null) s.lockCamera();
+        if (s != null) { s.switchPerspectiveIfDue(); s.lockCamera(); }
         if (s != null && s.capturingCounters()) { s.frameSeenMask = 0; s.frameReturnedCalls = 0; s.frameLocalReturns = 0; }
     }
 
@@ -225,7 +253,39 @@ public final class EquippedCrowdBenchmark {
         static boolean enabled() { return dev.tr7zw.firstperson.api.FirstPersonAPI.isEnabled(); }
     }
 
-    private record Scene(String id, int players, boolean walk, boolean deck, boolean occluded, float pitch) {}
+    /** Installed mod's native F5 entry, cached outside measured frames. */
+    private static final class UnlockedState {
+        static final boolean installed = ModList.get().isLoaded("unlockedcamera");
+        static final java.lang.reflect.Method enter;
+        static final java.lang.reflect.Field active;
+        static {
+            try {
+                Class<?> type = installed ? Class.forName("com.caleb.unlockedcamera.client.UnlockedCameraClient") : null;
+                enter = type == null ? null : type.getDeclaredMethod("enterCamera", Minecraft.class);
+                active = type == null ? null : type.getDeclaredField("active");
+                if (enter != null) { enter.setAccessible(true); active.setAccessible(true); }
+            } catch (ReflectiveOperationException failure) { throw new ExceptionInInitializerError(failure); }
+        }
+        static void enter(Minecraft mc) {
+            try { if (enter != null) enter.invoke(null, mc); }
+            catch (ReflectiveOperationException failure) { throw new IllegalStateException("Native UnlockedCamera entry failed", failure); }
+        }
+        static boolean active() {
+            try { return active != null && active.getBoolean(null); }
+            catch (ReflectiveOperationException failure) { throw new IllegalStateException(failure); }
+        }
+        static void leave() {
+            try { if (active != null) active.setBoolean(null, false); }
+            catch (ReflectiveOperationException failure) { throw new IllegalStateException(failure); }
+        }
+    }
+
+    private record Scene(String id, int players, boolean walk, boolean deck, boolean occluded, float pitch,
+                         boolean nearDeck, CameraType camera, boolean switches) {
+        Scene(String id, int players, boolean walk, boolean deck, boolean occluded, float pitch) {
+            this(id, players, walk, deck, occluded, pitch, false, CameraType.FIRST_PERSON, false);
+        }
+    }
     private record Grid(Vec3 observer, float yaw, List<Vec3> positions) {}
 
     /** Default skins use the native getSkin path, including Aether/Deep Aether cape replacements. */
@@ -238,6 +298,7 @@ public final class EquippedCrowdBenchmark {
         BenchmarkLoadouts.Applied gear;
         long movementTicks;
         double cumulativePath, lastX, lastY, lastZ;
+        Vec3 lastPlotTarget;
 
         CrowdPlayer(Session s, int index, int id, Vec3 position, Vec3 reference) {
             super(s.level, profile(index));
@@ -254,6 +315,9 @@ public final class EquippedCrowdBenchmark {
 
         @Override public void tick() {
             if (owner.finishing || owner.scene != scene) { super.tick(); return; }
+            // This suite feeds only packet-like targets from ClientTick.Post. Native
+            // full/reduced processing alone must advance plot and world positions.
+            if (owner.sableReducedBenchmark) { super.tick(); return; }
             // A skipped actor must not be repaired by a fixture position/plot update during functional probes.
             if (owner.visibility != null) { super.tick(); return; }
             double t = owner.clientMotionTicks, phase = index * .63;
@@ -271,6 +335,12 @@ public final class EquippedCrowdBenchmark {
             } else walkAnimation.update(0, .4F);
             movementTicks++; cumulativePath += Math.sqrt(dx * dx + dy * dy + dz * dz);
             lastX = getX(); lastY = getY(); lastZ = getZ();
+        }
+
+        @Override public void aiStep() {
+            super.aiStep();
+            if (owner.sableReducedBenchmark && owner.measuring && owner.scene == scene)
+                owner.aiSteps[index]++;
         }
     }
 
@@ -292,7 +362,10 @@ public final class EquippedCrowdBenchmark {
         final Path output;
         final int warmupSeconds, measureSeconds;
         final Grid grid;
-        final Vec3 deckObserver, platformBase;
+        final Vec3 deckObserver, platformBase, nearObserver;
+        final Scene[] scenes;
+        final boolean perspectiveComparison;
+        final boolean sableReducedBenchmark = SABLE_REDUCED_BENCHMARK;
         final CameraType originalCamera;
         final Entity originalCameraEntity;
         final float originalYaw, originalPitch;
@@ -311,6 +384,11 @@ public final class EquippedCrowdBenchmark {
         final long[] gcCountBefore = new long[collectors.size()], gcTimeBefore = new long[collectors.size()];
         final long[] gcCountAfter = new long[collectors.size()], gcTimeAfter = new long[collectors.size()];
         final long[] intervals = new long[250_000], renderReturns = new long[24], fullTicks = new long[24], accessoryDispatches = new long[24];
+        final long[] aiSteps = new long[24], plotTargetUpdates = new long[24], motionSamples = new long[24],
+                movingSamples = new long[24], culledSamples = new long[24], outOfCameraSamples = new long[24], lostSupportSamples = new long[24];
+        final double[] measuredPaths = new double[24], maxPlotWorldErrors = new double[24], maxTargetLags = new double[24];
+        final int[] frameCameras = new int[250_000], switchFrames = new int[64], switchFrom = new int[64], switchTo = new int[64];
+        final long[] switchOffsets = new long[64];
         final long[] predicateSamples = new long[24], predicateTrue = new long[24], dynamicTrue = new long[24];
         final long deadline;
         final Map<BlockPos, BlockState> originalWall = new LinkedHashMap<>();
@@ -330,7 +408,12 @@ public final class EquippedCrowdBenchmark {
         int sceneIndex, ticks, readyTicks, clientMotionTicks, samples, minSeen, maxSeen, restoreTicks;
         long phaseDeadline, measurementStart, previousFrame, frameSeenMask, frameReturnedCalls, frameLocalReturns;
         long totalReturns, shadowReturns, fullyRenderedFrames, missingFrames, localRenderedFrames, localBodyReturns,
-                localFullTicks, localAccessoryDispatches, heapBefore, heapAfter, measuredTicks, localTrackedTicks;
+                localFullTicks, localAccessoryDispatches, heapBefore, heapAfter, measuredTicks, localTrackedTicks,
+                localUntrackedTicks, firstPersonFrames, thirdPersonFrames, thirdPersonBodyFrames;
+        CameraType expectedCamera;
+        int switchCount;
+        long nextSwitchAt;
+        double minimumCameraEyeDistance, maximumCameraEyeDistance;
         double maxLocalPlotDrift;
         long measuredActualViewSamples, measuredCameraAngleLocks;
         float maxActualViewYawError, maxActualViewPitchError;
@@ -343,7 +426,8 @@ public final class EquippedCrowdBenchmark {
         volatile VisibilityProbe visibility;
 
         Session(Minecraft mc, Path output, String label, int warmup, int measure, boolean cleanupOnly,
-                boolean nowheelComparison, boolean visibilityProbe, boolean probeOnly) {
+                boolean nowheelComparison, boolean visibilityProbe, boolean probeOnly,
+                boolean perspectiveComparison, String perspectiveSceneFilter, boolean perspectiveIncludeGroundCrowd) {
             if (!disposable(mc) || mc.player.isPassenger() || mc.player.isUsingItem() || !mc.player.onGround())
                 throw new IllegalStateException("Benchmark requires the isolated, grounded, unmounted offline player");
             if (tracking(mc.player) != null || ((EntityStickExtension)mc.player).sable$getPlotPosition() != null)
@@ -352,6 +436,13 @@ public final class EquippedCrowdBenchmark {
                 throw new IllegalStateException("Benchmark requires uncapped maxFps>=260 and VSync disabled; no settings changed");
             this.mc = mc; level = mc.level; local = mc.player; server = mc.getSingleplayerServer(); this.output = output;
             warmupSeconds = warmup; measureSeconds = measure;
+            this.perspectiveComparison = perspectiveComparison;
+            if (sableReducedBenchmark && (perspectiveComparison || cleanupOnly || nowheelComparison || visibilityProbe || probeOnly))
+                throw new IllegalArgumentException("Reduced-tick benchmark cannot be combined with another suite/probe mode");
+            scenes = sableReducedBenchmark ? SABLE_REDUCED_SCENES : perspectiveComparison ? Arrays.stream(PERSPECTIVE_SCENES)
+                    .filter(s -> perspectiveIncludeGroundCrowd || !s.id.equals("world-crowd-third-24"))
+                    .filter(s -> s.id.matches(perspectiveSceneFilter)).toArray(Scene[]::new) : SCENES;
+            if (scenes.length == 0) throw new IllegalArgumentException("No perspective scenes matched the requested filter");
             this.cleanupOnly = cleanupOnly;
             this.nowheelComparison = nowheelComparison; this.visibilityProbe = visibilityProbe; this.probeOnly = probeOnly;
             nowheel = nowheelComparison ? new NowheelTelemetry() : null;
@@ -370,6 +461,16 @@ public final class EquippedCrowdBenchmark {
             grid = findGrid(level, local.position());
             deckObserver = grid.observer.add(64, 12, 0);
             platformBase = deckObserver.add(0, -1, 8);
+            nearObserver = grid.observer.add(64, 0, -12);
+            if (perspectiveComparison && Arrays.stream(scenes).anyMatch(s -> s.nearDeck)) {
+                BlockPos below = BlockPos.containing(nearObserver.x, nearObserver.y - .05, nearObserver.z);
+                var shape = level.getBlockState(below).getCollisionShape(level, below);
+                if (!level.hasChunkAt(below) || shape.isEmpty()
+                        || Math.abs(below.getY() + shape.max(Direction.Axis.Y) - nearObserver.y) > .08
+                        || !level.noCollision(null, new AABB(nearObserver.x - 1, nearObserver.y + .01, nearObserver.z - 1,
+                        nearObserver.x + 1, nearObserver.y + 2, nearObserver.z + 1)))
+                    throw new IllegalStateException("Near-deck observer requires existing unobstructed world ground");
+            }
             originalCamera = mc.options.getCameraType(); originalCameraEntity = mc.getCameraEntity();
             originalYaw = local.getYRot(); originalPitch = local.getXRot(); originalClientNoGravity = local.isNoGravity();
             originalClientFlying = local.getAbilities().flying; originalClientMovement = local.getDeltaMovement();
@@ -379,10 +480,32 @@ public final class EquippedCrowdBenchmark {
                     mc.options.keyShift, mc.options.keyJump, mc.options.keySprint, mc.options.keyUse, mc.options.keyAttack)) {
                 keys.put(key, key.isDown());
             }
-            deadline = System.nanoTime() + (long)(SCENES.length * (warmup + measure + 15) + 180) * 1_000_000_000L;
+            deadline = System.nanoTime() + (long)(scenes.length * (warmup + measure + 15) + 180) * 1_000_000_000L;
             report.put("label", label); report.put("startedAt", Instant.now().toString());
             report.put("originalClientState", motionState(local));
             report.put("cleanupOnlyPreflight", cleanupOnly);
+            report.put("perspectiveComparison", perspectiveComparison);
+            report.put("sableReducedBenchmark", sableReducedBenchmark);
+            report.put("sableFullTicksProperty", Boolean.getBoolean("emfattachments.sableFullTicks"));
+            if (sableReducedBenchmark) {
+                if (!ModList.get().isLoaded("emfattachments") || !ModList.get().isLoaded("entityculling"))
+                    throw new IllegalStateException("Reduced-tick A/B requires the same production jar and Entity Culling in both modes");
+                report.put("modVersions", NowheelTelemetry.versions());
+                report.put("behaviorFailures", behaviorFailures);
+                report.put("remoteMotionInputPolicy", "Initial spawn establishes world position, plot position and support once. Thereafter ClientTick.Post sends only sable$plotLerpTo(target,3) every three client ticks, independently of actor ticking. Native full tick or reduced aiStep alone advances world/plot positions. The fixture never repairs positions or tracking, forces culling flags, or calls aiStep itself.");
+                report.put("remoteMotionValidation", Map.of("maximumPlotWorldErrorBlocks", .25,
+                        "maximumPlotTargetLagBlocks", .5, "minimumMeasuredTravelBlocks", .5,
+                        "minimumNativeAiStepsPerMeasuredTick", .9, "minimumHiddenCullFraction", .9));
+            }
+            report.put("perspectiveSceneFilter", perspectiveSceneFilter);
+            report.put("perspectiveIncludeGroundCrowd", perspectiveIncludeGroundCrowd);
+            report.put("plannedScenes", Arrays.stream(scenes).map(s -> s.id).toList());
+            if (perspectiveComparison) {
+                report.put("perspectiveSwitchPolicy", "First/back camera alternation every two seconds during measured intervals. Uses installed UnlockedCamera's native enterCamera method used by F5; return to first person clears its active flag and calls native Options.setCameraType, GameRenderer.checkEntityPostEffect and LevelRenderer.needsUpdate. Physical F5 dispatch, front-view cycling and free-look motion are not simulated. Scene warmup stays first person for switch scenes. Frame indices are zero-based and identify the first interval containing the switched view.");
+                report.put("unlockedCameraInstalled", UnlockedState.installed);
+                report.put("nearDeckPolicy", "Grounded untracked observer 20 blocks horizontally from moving elevated platform origin, looking upward 25 degrees. Native deck geometry remains present throughout the suite; ordinary-world controls are 64 blocks away.");
+                report.put("frameCameraOrdinalNames", List.of("FIRST_PERSON", "THIRD_PERSON_BACK", "THIRD_PERSON_FRONT"));
+            }
             report.put("restorationPolicy", "Remove owned Sable support and await client removal before authoritative teleport. Restore separate Sable inherited velocity and last-support state on both sides, then verify immediate server state and settled client/server state without widening position tolerance.");
             report.put("runtime", mc.gameDirectory.toPath().toAbsolutePath().normalize().toString());
             report.put("compatInstalled", ModList.get().isLoaded("emfattachments"));
@@ -402,7 +525,9 @@ public final class EquippedCrowdBenchmark {
             report.put("platformTrajectory", Map.of("horizontalAmplitudeBlocks", .5, "verticalAmplitudeBlocks", .25,
                     "rollRadians", 0, "controller", "Native physics-pipeline teleport/resetVelocity; translation only for a stable native observer"));
             report.put("stages", stages);
-            report.put("scope", "Standalone offline native client-render workload: equipped RemotePlayer entities with native default skin/cape hooks, deterministic walking and native full ticks; a real server-owned moving Sable platform carries the local observer and remote plot-position players. Compatibility jar is physically present/absent per manifest.");
+            report.put("scope", sableReducedBenchmark
+                    ? "Same-jar full/reduced Sable tick comparison: equipped RemotePlayers receive identical independent plot interpolation targets on a real moving server-owned deck, with open and native wall-occluded views. Client-side actor and rendering costs are measured; multiplayer packet transport and server simulation costs are excluded."
+                    : "Standalone offline native client-render workload: equipped RemotePlayer entities with native default skin/cape hooks, deterministic walking and native full ticks; a real server-owned moving Sable platform carries the local observer and remote plot-position players. Compatibility jar is physically present/absent per manifest.");
             report.put("limitations", List.of("Remote actors are client-only clones, not actual networked clients; no network, skin downloads or real remote-server simulation is benchmarked.",
                     "Walking target updates and controlled native physics-pipeline teleports add shared fixture work to every mode.",
                     "Native default WIDE/SLIM skins execute getSkin/cape hooks without player-info downloads; custom user skins are not represented.",
@@ -426,8 +551,35 @@ public final class EquippedCrowdBenchmark {
         }
 
         boolean capturingCounters() { return measuring || visibility != null && visibility.sampling; }
-        float expectedYaw() { return visibility == null ? (scene.deck ? 0 : grid.yaw) : visibility.yaw(); }
+        float expectedYaw() { return visibility == null ? (scene.deck || scene.nearDeck ? 0 : grid.yaw) : visibility.yaw(); }
         float expectedPitch() { return visibility == null ? scene.pitch : 5; }
+        Vec3 worldObserver() { return scene.nearDeck ? nearObserver : grid.observer; }
+
+        void setPerspective(CameraType next) {
+            CameraType old = mc.options.getCameraType();
+            expectedCamera = next;
+            if (perspectiveComparison && UnlockedState.installed && next == CameraType.THIRD_PERSON_BACK) {
+                UnlockedState.enter(mc);
+            } else {
+                if (perspectiveComparison && UnlockedState.installed) UnlockedState.leave();
+                mc.options.setCameraType(next);
+                if (old.isFirstPerson() != next.isFirstPerson())
+                    mc.gameRenderer.checkEntityPostEffect(next.isFirstPerson() ? mc.getCameraEntity() : null);
+                mc.levelRenderer.needsUpdate();
+            }
+        }
+
+        void switchPerspectiveIfDue() {
+            if (!measuring || !scene.switches) return;
+            long now = System.nanoTime();
+            if (now < nextSwitchAt) return;
+            if (switchCount == switchFrames.length) throw new IllegalStateException("Switch capacity exceeded");
+            CameraType next = expectedCamera == CameraType.FIRST_PERSON ? CameraType.THIRD_PERSON_BACK : CameraType.FIRST_PERSON;
+            switchFrames[switchCount] = samples; switchOffsets[switchCount] = now - measurementStart;
+            switchFrom[switchCount] = expectedCamera.ordinal(); switchTo[switchCount] = next.ordinal(); switchCount++;
+            setPerspective(next);
+            nextSwitchAt = now + 2_000_000_000L;
+        }
 
         void prepareNowheelTelemetry() {
             RemotePlayer plot = new RemotePlayer(level, profile(100)), world = new RemotePlayer(level, profile(101));
@@ -500,7 +652,7 @@ public final class EquippedCrowdBenchmark {
             if (platform == null || platform.isRemoved()) return;
             if (visibility != null) { visibility.drive(); return; }
             Scene s = scene;
-            double phase = s != null && s.deck ? driveTicks++ * Math.PI / 100 : 0;
+            double phase = s != null && (s.deck || s.nearDeck) ? driveTicks++ * Math.PI / 100 : 0;
             double x = platformBase.x + .5 * Math.sin(phase);
             double y = platformBase.y + .25 * Math.sin(phase * 2);
             var pipeline = SubLevelContainer.getContainer(platform.getLevel()).physicsSystem().getPipeline();
@@ -529,7 +681,7 @@ public final class EquippedCrowdBenchmark {
                 report.put("originalServerState", serverSnapshot.description());
                 waitingInitial = false;
                 if (nowheelComparison) prepareNowheelTelemetry();
-                if (cleanupOnly || probeOnly) sceneIndex = SCENES.length - 1;
+                if (cleanupOnly || probeOnly) sceneIndex = scenes.length - 1;
                 startStage(); return;
             }
             if (visibility != null) { visibility.tick(); return; }
@@ -538,11 +690,11 @@ public final class EquippedCrowdBenchmark {
                 stagePreparation.join();
                 local.setNoGravity(false);
                 boolean correctPosition = scene.deck ? tracking(local) == clientDeck && local.onGround()
-                        : local.position().distanceToSqr(grid.observer) < .0025 && local.onGround();
+                        : local.position().distanceToSqr(worldObserver()) < .0025 && local.onGround() && tracking(local) == null;
                 readyTicks = correctPosition ? readyTicks + 1 : 0;
                 if (ticks > 300) throw new IllegalStateException("Observer did not settle at native scene position: " + scene.id + " " + local.position());
                 if (readyTicks < 12) return;
-                local.setYRot(scene.deck ? 0 : grid.yaw); local.yRotO = local.getYRot();
+                local.setYRot(expectedYaw()); local.yRotO = local.getYRot();
                 local.yHeadRot = local.yHeadRotO = local.yBodyRot = local.yBodyRotO = local.getYRot();
                 local.setXRot(scene.pitch); local.xRotO = scene.pitch;
                 spawnClones(); waitingStage = false; stageReady = true; warmed = false;
@@ -550,12 +702,56 @@ public final class EquippedCrowdBenchmark {
                 report.put("phase", "WARMUP"); write("RUNNING", false, scene.id); return;
             }
             clientMotionTicks++;
+            if (sableReducedBenchmark) advanceRemoteTargetsAndObserve();
             lockCamera();
             validate();
             if (measuring) {
                 measuredTicks++;
                 if (scene.deck && tracking(local) == clientDeck) localTrackedTicks++;
+                if (tracking(local) == null) localUntrackedTicks++;
                 if (nowheelComparison && measuredTicks % 20 == 0) samplePredicates();
+            }
+        }
+
+        void advanceRemoteTargetsAndObserve() {
+            for (CrowdPlayer clone : clones) {
+                int i = clone.index;
+                double dx = clone.getX() - clone.lastX, dy = clone.getY() - clone.lastY, dz = clone.getZ() - clone.lastZ;
+                double distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                clone.lastX = clone.getX(); clone.lastY = clone.getY(); clone.lastZ = clone.getZ();
+                clone.cumulativePath += distance; clone.movementTicks++;
+                EntityStickExtension stick = (EntityStickExtension)(Object)clone;
+                Vec3 plot = stick.sable$getPlotPosition();
+                if (measuring) {
+                    motionSamples[i]++; measuredPaths[i] += distance;
+                    if (distance > 1e-6) movingSamples[i]++;
+                    if (tracking(clone) != clientDeck || plot == null) lostSupportSamples[i]++;
+                    if (plot != null) {
+                        maxPlotWorldErrors[i] = Math.max(maxPlotWorldErrors[i], clientDeck.logicalPose().transformPosition(plot).distanceTo(clone.position()));
+                        if (clone.lastPlotTarget != null)
+                            maxTargetLags[i] = Math.max(maxTargetLags[i], plot.distanceTo(clone.lastPlotTarget));
+                    }
+                    var culling = (dev.tr7zw.entityculling.access.Cullable)(Object)clone;
+                    if (culling.isCulled()) culledSamples[i]++;
+                    if (culling.isOutOfCamera()) outOfCameraSamples[i]++;
+                }
+                if (clone.lastPlotTarget == null || clientMotionTicks % 3 == 0) {
+                    double phase = clientMotionTicks * .08 + i * .63;
+                    clone.lastPlotTarget = new Vec3(clone.baseX + .6 * Math.sin(phase), clone.baseY,
+                            clone.baseZ + .3 * Math.cos(phase));
+                    stick.sable$plotLerpTo(clone.lastPlotTarget, 3);
+                    if (measuring) plotTargetUpdates[i]++;
+                }
+            }
+        }
+
+        void resetRemoteMotionCounters() {
+            Arrays.fill(aiSteps, 0); Arrays.fill(plotTargetUpdates, 0); Arrays.fill(motionSamples, 0);
+            Arrays.fill(movingSamples, 0); Arrays.fill(culledSamples, 0); Arrays.fill(outOfCameraSamples, 0);
+            Arrays.fill(lostSupportSamples, 0); Arrays.fill(measuredPaths, 0);
+            Arrays.fill(maxPlotWorldErrors, 0); Arrays.fill(maxTargetLags, 0);
+            for (CrowdPlayer clone : clones) {
+                clone.lastX = clone.getX(); clone.lastY = clone.getY(); clone.lastZ = clone.getZ();
             }
         }
 
@@ -565,8 +761,8 @@ public final class EquippedCrowdBenchmark {
             if (mc.getWindow().getWidth() != 2560 || mc.getWindow().getHeight() != 1440 || mc.options.fov().get() != 90
                     || mc.options.renderDistance().get() != 8 || mc.options.simulationDistance().get() != 8 || !mc.getWindow().isFullscreen())
                 throw new IllegalStateException("Native benchmark viewport/settings differ from fullscreen2560x1440, FOV90, render/simulation8");
-            if (mc.options.getCameraType() != CameraType.FIRST_PERSON || mc.getCameraEntity() != local || local.isPassenger())
-                throw new IllegalStateException("First-person observer camera changed");
+            if (mc.options.getCameraType() != expectedCamera || mc.getCameraEntity() != local || local.isPassenger())
+                throw new IllegalStateException("Observer perspective changed outside scheduled transition");
             float expectedYaw = expectedYaw();
             if (Math.abs(net.minecraft.util.Mth.wrapDegrees(local.getYRot() - expectedYaw)) > .15F || Math.abs(local.getXRot() - expectedPitch()) > .15F)
                 throw new IllegalStateException("Observer look direction changed");
@@ -582,7 +778,7 @@ public final class EquippedCrowdBenchmark {
                 maxLocalPlotDrift = Math.max(maxLocalPlotDrift, Math.hypot(relative.x - (center.getX() + .5), relative.z - (center.getZ() - 8)));
                 if (Math.abs(relative.x - (center.getX() + .5)) > .3 || Math.abs(relative.z - (center.getZ() - 8)) > .3)
                     throw new IllegalStateException("Observer moved across deck: " + relative);
-            } else if (local.position().distanceToSqr(grid.observer) > .0025) throw new IllegalStateException("World observer moved");
+            } else if (local.position().distanceToSqr(worldObserver()) > .0025 || tracking(local) != null) throw new IllegalStateException("World observer moved or acquired deck support");
         }
 
         boolean cameraLockAllowed() {
@@ -604,11 +800,14 @@ public final class EquippedCrowdBenchmark {
             measuredActualViewSamples++;
             maxActualViewYawError = Math.max(maxActualViewYawError, Math.abs(net.minecraft.util.Mth.wrapDegrees(camera.getYRot() - yaw)));
             maxActualViewPitchError = Math.max(maxActualViewPitchError, Math.abs(camera.getXRot() - expectedPitch()));
+            double distance = camera.getPosition().distanceTo(local.getEyePosition(mc.getTimer().getGameTimeDeltaPartialTick(false)));
+            minimumCameraEyeDistance = Math.min(minimumCameraEyeDistance, distance);
+            maximumCameraEyeDistance = Math.max(maximumCameraEyeDistance, distance);
         }
 
         void startStage() {
             Scene previous = scene;
-            Scene next = SCENES[sceneIndex];
+            Scene next = scenes[sceneIndex];
             continuedDeckRide = previous != null && previous.deck && next.deck;
             removeClones(); scene = next;
             // Reboarding/resetting a moving native rider can replay in-flight advection updates.
@@ -620,22 +819,33 @@ public final class EquippedCrowdBenchmark {
             measuredActualViewSamples = measuredCameraAngleLocks = 0;
             maxActualViewYawError = maxActualViewPitchError = 0;
             stageReady = false; waitingStage = true; measuring = false;
-            mc.options.setCameraType(CameraType.FIRST_PERSON); mc.setCameraEntity(local);
+            mc.setCameraEntity(local); setPerspective(scene.camera);
             keys.keySet().forEach(key -> key.setDown(false));
-            if (!continuedDeckRide) local.setNoGravity(true);
+            if (!continuedDeckRide) {
+                local.setNoGravity(true);
+                if (perspectiveComparison) {
+                    clearOwnedSupport(local);
+                    ((LivingEntityMovementExtension)local).sable$getInheritedVelocity().zero();
+                    local.setDeltaMovement(Vec3.ZERO);
+                }
+            }
             stagePreparation = server(p -> {
                 if (scene.occluded) createWall(p); else restoreWall(p);
                 if (continuedDeckRide) {
                     if (tracking(p) != platform) throw new IllegalStateException("Server observer lost the existing native deck ride");
                     return null;
                 }
+                if (perspectiveComparison) {
+                    clearOwnedSupport(p);
+                    ((LivingEntityMovementExtension)p).sable$getInheritedVelocity().zero();
+                }
                 p.setGameMode(GameType.CREATIVE); p.getAbilities().flying = false; p.onUpdateAbilities(); p.setNoGravity(false);
                 Vec3 position;
                 if (scene.deck) {
                     BlockPos center = platform.getPlot().getCenterBlock();
                     position = platform.logicalPose().transformPosition(new Vec3(center.getX() + .5, center.getY() + 2, center.getZ() - 8));
-                } else position = grid.observer;
-                p.teleportTo(p.serverLevel(), position.x, position.y, position.z, scene.deck ? 0 : grid.yaw, scene.pitch);
+                } else position = worldObserver();
+                p.teleportTo(p.serverLevel(), position.x, position.y, position.z, expectedYaw(), scene.pitch);
                 p.setDeltaMovement(Vec3.ZERO); p.fallDistance = 0;
                 return null;
             });
@@ -717,8 +927,11 @@ public final class EquippedCrowdBenchmark {
                 if (probeOnly) { beginVisibilityProbe(); return; }
                 samples = 0; Arrays.fill(renderReturns, 0); Arrays.fill(fullTicks, 0); Arrays.fill(accessoryDispatches, 0);
                 resetCounters();
+                if (sableReducedBenchmark) resetRemoteMotionCounters();
                 totalReturns = shadowReturns = fullyRenderedFrames = missingFrames = localRenderedFrames = localBodyReturns = 0;
-                localFullTicks = localAccessoryDispatches = measuredTicks = localTrackedTicks = 0;
+                localFullTicks = localAccessoryDispatches = measuredTicks = localTrackedTicks = localUntrackedTicks = 0;
+                firstPersonFrames = thirdPersonFrames = thirdPersonBodyFrames = 0; switchCount = 0;
+                minimumCameraEyeDistance = Double.POSITIVE_INFINITY; maximumCameraEyeDistance = 0;
                 measuredActualViewSamples = measuredCameraAngleLocks = 0;
                 maxActualViewYawError = maxActualViewPitchError = 0;
                 minSeen = Integer.MAX_VALUE; maxSeen = 0;
@@ -727,9 +940,13 @@ public final class EquippedCrowdBenchmark {
                 for (int i = 0; i < collectors.size(); i++) { gcCountBefore[i] = collectors.get(i).getCollectionCount(); gcTimeBefore[i] = collectors.get(i).getCollectionTime(); }
                 heapBefore = ManagementFactory.getMemoryMXBean().getHeapMemoryUsage().getUsed();
                 previousFrame = measurementStart = System.nanoTime(); phaseDeadline = measurementStart + measureSeconds * 1_000_000_000L;
+                nextSwitchAt = measurementStart + 2_000_000_000L;
                 warmed = true; measuring = true; return;
             }
             if (samples >= intervals.length) throw new IllegalStateException("Preallocated frame sample capacity exceeded");
+            frameCameras[samples] = mc.options.getCameraType().ordinal();
+            if (mc.options.getCameraType().isFirstPerson()) firstPersonFrames++;
+            else { thirdPersonFrames++; if (frameLocalReturns > 0) thirdPersonBodyFrames++; }
             intervals[samples++] = now - previousFrame; previousFrame = now;
             int seen = Long.bitCount(frameSeenMask); minSeen = Math.min(minSeen, seen); maxSeen = Math.max(maxSeen, seen);
             totalReturns += frameReturnedCalls;
@@ -741,7 +958,7 @@ public final class EquippedCrowdBenchmark {
             heapAfter = ManagementFactory.getMemoryMXBean().getHeapMemoryUsage().getUsed();
             validate(); completeStage(now);
             stageReady = false;
-            if (++sceneIndex == SCENES.length) {
+            if (++sceneIndex == scenes.length) {
                 if (visibilityProbe) beginVisibilityProbe();
                 else finish("CAPTURED", "All scene measurements captured; requires visual and repeatability review.");
             }
@@ -753,7 +970,22 @@ public final class EquippedCrowdBenchmark {
             long[] raw = Arrays.copyOf(intervals, samples), sorted = raw.clone(); Arrays.sort(sorted);
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("sceneId", scene.id); row.put("players", scene.players); row.put("walking", scene.walk);
-            row.put("movingSublevel", scene.deck); row.put("realWallOcclusion", scene.occluded);
+            row.put("movingSublevel", scene.deck || scene.nearDeck); row.put("realWallOcclusion", scene.occluded);
+            if (sableReducedBenchmark) row.put("sableFullTicksProperty", Boolean.getBoolean("emfattachments.sableFullTicks"));
+            if (perspectiveComparison) {
+                row.put("observerOnDeck", scene.deck); row.put("nearbyMovingDeck", scene.nearDeck);
+                row.put("initialCameraType", scene.camera.name()); row.put("cameraTypeAtEnd", mc.options.getCameraType().name());
+                row.put("frameCameraTypeOrdinals", Arrays.copyOf(frameCameras, samples));
+                row.put("localUntrackedTicks", localUntrackedTicks);
+                row.put("firstPersonFrameCount", firstPersonFrames); row.put("thirdPersonFrameCount", thirdPersonFrames);
+                row.put("thirdPersonFramesLocalBodyReturned", thirdPersonBodyFrames);
+                row.put("unlockedCameraActiveAtEnd", UnlockedState.active());
+                row.put("minimumCameraEyeDistance", minimumCameraEyeDistance); row.put("maximumCameraEyeDistance", maximumCameraEyeDistance);
+                List<Map<String, Object>> switches = new ArrayList<>();
+                for (int i = 0; i < switchCount; i++) switches.add(Map.of("frameIndex", switchFrames[i], "offsetNanos", switchOffsets[i],
+                        "from", CameraType.values()[switchFrom[i]].name(), "to", CameraType.values()[switchTo[i]].name()));
+                row.put("cameraSwitches", switches);
+            }
             row.put("continuedNativeDeckRide", continuedDeckRide);
             row.put("platformDriveTickAtSceneStart", stageDriveTickAtStart); row.put("platformDriveTickAtSceneEnd", driveTicks);
             row.put("sampleCount", samples); row.put("durationNanos", duration); row.put("frameIntervalsNanos", raw);
@@ -786,6 +1018,27 @@ public final class EquippedCrowdBenchmark {
                 p.put("skin", skin(clone)); p.put("worldPosition", vector(clone.position()));
                 p.put("nativeFullTicks", fullTicks[clone.index]); p.put("nativeRendererReturns", renderReturns[clone.index]);
                 p.put("accessoryDispatches", accessoryDispatches[clone.index]); p.put("controllerMovementTicks", clone.movementTicks); p.put("cumulativePath", clone.cumulativePath);
+                if (sableReducedBenchmark) {
+                    int i = clone.index;
+                    p.put("nativeAiSteps", aiSteps[i]); p.put("independentPlotTargetUpdates", plotTargetUpdates[i]);
+                    p.put("nativeMotionSamples", motionSamples[i]); p.put("nativeMovingSamples", movingSamples[i]);
+                    p.put("nativeMeasuredTravelBlocks", measuredPaths[i]); p.put("nativeCulledSamples", culledSamples[i]);
+                    p.put("nativeOutOfCameraSamples", outOfCameraSamples[i]); p.put("lostSupportSamples", lostSupportSamples[i]);
+                    p.put("maximumNativePlotWorldError", maxPlotWorldErrors[i]); p.put("maximumPlotTargetLag", maxTargetLags[i]);
+                    p.put("lastIndependentPlotTarget", clone.lastPlotTarget == null ? List.of() : vector(clone.lastPlotTarget));
+                    p.put("nativeCullingAtMeasurementEnd", NowheelTelemetry.culling(clone));
+                    boolean motionValid = motionSamples[i] > 0 && plotTargetUpdates[i] > 0 && lostSupportSamples[i] == 0
+                            && aiSteps[i] >= measuredTicks * .9 && measuredPaths[i] > .5
+                            && maxPlotWorldErrors[i] <= .25 && maxTargetLags[i] <= .5;
+                    boolean cullingValid = !scene.occluded || culledSamples[i] >= motionSamples[i] * .9;
+                    boolean tickModeValid = !scene.occluded || (Boolean.getBoolean("emfattachments.sableFullTicks")
+                            ? fullTicks[i] >= measuredTicks * .9 : fullTicks[i] < measuredTicks * .1);
+                    p.put("nativeMotionValidated", motionValid); p.put("hiddenCullingValidated", cullingValid);
+                    p.put("hiddenTickModeValidated", tickModeValid);
+                    if (!motionValid || !cullingValid || !tickModeValid)
+                        behaviorFailures.add(Map.of("scope", scene.id, "index", i, "nativeMotionValidated", motionValid,
+                                "hiddenCullingValidated", cullingValid, "hiddenTickModeValidated", tickModeValid));
+                }
                 if (nowheelComparison) {
                     p.put("nowheelPredicateSamples", predicateSamples[clone.index]);
                     p.put("nowheelPredicateTrueSamples", predicateTrue[clone.index]);
@@ -795,6 +1048,7 @@ public final class EquippedCrowdBenchmark {
                 }
                 p.put("resident", level.getEntity(clone.getId()) == clone);
                 p.put("trackingMatchesOwnedDeck", tracking(clone) == clientDeck);
+                p.put("trackingSublevel", tracking(clone) == null ? "" : tracking(clone).getUniqueId().toString());
                 Vec3 plot = ((EntityStickExtension)(Object)clone).sable$getPlotPosition();
                 p.put("plotPosition", plot == null ? List.of() : vector(plot));
                 if (scene.deck && plot != null) p.put("nativePlotWorldPositionError", clientDeck.logicalPose().transformPosition(plot).distanceTo(clone.position()));
@@ -804,6 +1058,15 @@ public final class EquippedCrowdBenchmark {
             row.put("openSceneEveryCloneEveryFrame", scene.occluded ? null : missingFrames == 0);
             row.put("rendererWorkloadComparable", scene.occluded ? null : allObserved && missingFrames == 0 && allAccessoriesObserved);
             row.put("occlusionWorkloadDifferenceExpected", scene.occluded);
+            if (sableReducedBenchmark) {
+                if (!scene.occluded && (!allObserved || !allAccessoriesObserved || missingFrames != 0))
+                    behaviorFailures.add(Map.of("scope", scene.id, "finding", "Open scene missed native player/accessory rendering",
+                            "everyCloneObserved", allObserved, "everyCloneAccessoryDispatcherObserved", allAccessoriesObserved,
+                            "framesMissingSomeClone", missingFrames));
+                boolean valid = behaviorFailures.stream().noneMatch(f -> scene.id.equals(f.get("scope")));
+                row.put("nativeMotionAndTickModeValidated", valid);
+                row.put("occlusionWorkloadDifferenceExpected", false);
+            }
             List<Map<String, Object>> gc = new ArrayList<>();
             for (int i = 0; i < collectors.size(); i++) gc.add(Map.of("name", collectors.get(i).getName(),
                     "collectionCountDelta", gcCountAfter[i] - gcCountBefore[i], "collectionTimeMillisDelta", gcTimeAfter[i] - gcTimeBefore[i]));
@@ -814,9 +1077,9 @@ public final class EquippedCrowdBenchmark {
             try (NativeImage pixels = Screenshot.takeScreenshot(mc.getMainRenderTarget())) { pixels.writeToFile(output.resolve(image)); }
             row.put("afterMeasurementScreenshot", image); row.put("visualValidationPending", true);
             stages.add(row); write("RUNNING", false, scene.id + " complete");
-            if (sceneIndex == 0 && ModList.get().isLoaded("firstperson") && localBodyReturns == 0)
+            if (!sableReducedBenchmark && sceneIndex == 0 && ModList.get().isLoaded("firstperson") && localBodyReturns == 0)
                 throw new IllegalStateException("FirstPerson look-down scene did not render the actual local body");
-            if (!scene.occluded && (!allObserved || !allAccessoriesObserved || missingFrames != 0)) {
+            if (!sableReducedBenchmark && !scene.occluded && (!allObserved || !allAccessoriesObserved || missingFrames != 0)) {
                 if (nowheelComparison) behaviorFailures.add(Map.of("scope", scene.id, "finding", "Open scene missed requested native player/accessory rendering", "everyCloneObserved", allObserved,
                         "everyCloneAccessoryDispatcherObserved", allAccessoriesObserved, "framesMissingSomeClone", missingFrames));
                 else if (!allObserved || !allAccessoriesObserved)
@@ -1212,6 +1475,7 @@ public final class EquippedCrowdBenchmark {
         values.put("renderDistance", mc.options.renderDistance().get()); values.put("simulationDistance", mc.options.simulationDistance().get());
         values.put("fov", mc.options.fov().get()); values.put("width", mc.getWindow().getWidth()); values.put("height", mc.getWindow().getHeight());
         values.put("fullscreen", mc.getWindow().isFullscreen());
+        values.put("shadersEnabled", IRIS && net.irisshaders.iris.api.v0.IrisApi.getInstance().isShaderPackInUse());
         values.put("focused", mc.isWindowActive()); values.put("hideGui", mc.options.hideGui); return values;
     }
     private static String describe(Throwable failure) {

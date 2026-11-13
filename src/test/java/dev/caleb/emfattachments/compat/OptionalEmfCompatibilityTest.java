@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Predicate;
 import java.util.regex.Pattern;
+import org.apache.maven.artifact.versioning.DefaultArtifactVersion;
 import org.junit.jupiter.api.Test;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.Type;
@@ -112,7 +113,11 @@ class OptionalEmfCompatibilityTest {
                 if (!key.equals("value") && !key.equals("targets")) continue;
                 for (Object target : (List<?>) annotation.values.get(i + 1)) {
                     String targetName = target instanceof Type type ? type.getClassName() : (String) target;
-                    return new OptionalMixinPlugin(installed).shouldApplyMixin(targetName, mixin.replace('/', '.'));
+                    // The Fresh hooks are available with either height source; the runtime
+                    // helper selects legacy deck motion or upstream precision protection.
+                    return new OptionalMixinPlugin(installed, (mod, minimum) -> !mod.equals("emf_compat_core")
+                            || new DefaultArtifactVersion("2.3.2").compareTo(new DefaultArtifactVersion(minimum)) >= 0)
+                            .shouldApplyMixin(targetName, mixin.replace('/', '.'));
                 }
             }
         }
@@ -132,6 +137,11 @@ class OptionalEmfCompatibilityTest {
     }
 
     private String emfDependencyPath(String name, Set<String> visited) throws IOException {
+        // These optional calls are guarded by discovered Core version before
+        // their nested classes are linked. The matching compatibility tests
+        // exercise the production guards while forbidding absent/older Core APIs.
+        if (name.equals(OWN_PACKAGE + "compat/EmfCrouchCompatibility$Core")
+                || name.equals(OWN_PACKAGE + "compat/EmfSableCompatibility$Core")) return null;
         if (name.startsWith("traben/entity_model_features/") || name.startsWith("traben/entity_texture_features/")
                 || name.startsWith("strm/emfcompat/") || name.startsWith("strm/neaemfcompat/")) return name;
         if (!name.startsWith(OWN_PACKAGE) || !visited.add(name)) return null;

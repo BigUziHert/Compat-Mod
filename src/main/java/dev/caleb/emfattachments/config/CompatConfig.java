@@ -59,7 +59,7 @@ public final class CompatConfig {
         DOWNWARD_BODY_CLEARANCE = b.comment("Additional body distance behind the camera when looking straight down, in blocks at normal size.",
                         "Blends smoothly from 40 to 90 degrees and follows player scale. Zero disables. The camera and interaction rays are unchanged.")
                 .translation("emfattachments.configuration.downwardBodyClearance").defineInRange("downwardBodyClearance", 0.45, 0.0, 1.0);
-        COMBAT_BODY_Y_OFFSET = b.comment("Crouched combat body height correction, in blocks.")
+        COMBAT_BODY_Y_OFFSET = b.comment("Crouched combat body height correction, in blocks. Used only when EMF Compat Core's crouch normalizer is inactive or unavailable.")
                 .translation("emfattachments.configuration.combatBodyYOffset")
                 .defineInRange("combatBodyYOffset", -0.1, -8.0, 8.0);
         ARM_PITCH_MULTIPLIER = b.comment("Camera pitch contribution during combat; 0 disables pitch following.")
