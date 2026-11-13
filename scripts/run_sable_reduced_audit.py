@@ -120,7 +120,7 @@ def prepare(args):
                         renderDistance='6', simulationDistance='6', guiScale='2')
     lines = [line for line in (BASE / 'baseline-options.txt').read_text(encoding='utf-8-sig').splitlines()
              if line.split(':', 1)[0] not in settings]
-    inside(RUNTIME / 'options.txt').write_text('\n'.join(lines + [f'{k}:{v}' for k, v in settings.items()]) + '\n')
+    inside(RUNTIME / 'options.txt').write_text('\n'.join(lines + [f'{k}:{v}' for k, v in settings.items()]) + '\n', encoding='utf-8')
     dynamic = inside(RUNTIME / 'config/dynamic_fps.json')
     if dynamic.exists():
         data = common.load(dynamic); data['enabled'] = False; save(dynamic, data)

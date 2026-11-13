@@ -1,8 +1,9 @@
 """Assert opt-in Sable reduced-tick runtime observations, optionally against a full-tick run.
 
-Run each fixture with -Demfattachments.sableReducedTickAudit=true. The baseline
-also uses -Demfattachments.sableFullTicks=true. Trigger the existing injected or
-natural Sable occlusion sequence in a disposable .local/client directory.
+Run each fixture with -Demfattachments.sableReducedTickAudit=true. A forced
+baseline also uses -Demfattachments.sableFullTicks=true. --expect-full-fallback
+instead verifies full ticks with that property absent. Trigger the existing
+injected or natural Sable occlusion sequence in a disposable .local/client directory.
 """
 import argparse
 import hashlib
@@ -14,7 +15,7 @@ from pathlib import Path
 ATTACHED = {'ATTACHED', 'PENDING_PLOT', 'INVISIBLE_ATTACHED'}
 
 
-def verify(path, expected_full):
+def verify(path, expected_full, expected_control=None):
     path = Path(path).resolve()
     report = json.loads(path.read_text(encoding='utf-8-sig'))
     checks = []
@@ -24,7 +25,9 @@ def verify(path, expected_full):
 
     check('completed capture', report.get('status') == 'CAPTURED', report.get('status'))
     check('opt-in audit enabled', report.get('reducedTickAudit') is True)
-    check('expected full-tick control', report.get('fullTickControl') is expected_full)
+    if expected_control is None:
+        expected_control = expected_full
+    check('expected full-tick control property', report.get('fullTickControl') is expected_control)
     check('production mixins enabled', report.get('productionMixinsDisabled') is False)
     for key in ('platformRemoved', 'witnessesRemoved', 'entityCullingStateRestored',
                 'inputsRestored', 'cameraRestored', 'fovRestored', 'serverStateRestored',
@@ -113,7 +116,8 @@ def verify(path, expected_full):
         rotations = {tuple(r['platformRotationQuaternion']) for r in hidden_samples if 'platformRotationQuaternion' in r}
         check('rotating platform observed', len(rotations) > 5, len(rotations))
     return {'report': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
-            'natural': natural, 'fullTickControl': expected_full, 'observations': len(rows),
+            'natural': natural, 'fullTickControl': expected_control,
+            'expectedFullTicks': expected_full, 'observations': len(rows),
             'hiddenReducedTicks': reduced_count, 'passed': all(c['passed'] for c in checks), 'checks': checks}
 
 
@@ -121,10 +125,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('report', type=Path)
     parser.add_argument('--baseline', type=Path, help='matching audit with sableFullTicks=true')
-    parser.add_argument('--expect-full', action='store_true', help='verify only a full-tick baseline report')
+    full_mode = parser.add_mutually_exclusive_group()
+    full_mode.add_argument('--expect-full', action='store_true', help='verify a forced full-tick baseline report')
+    full_mode.add_argument('--expect-full-fallback', action='store_true',
+                           help='verify full ticks from the default fallback, with no forced-control property')
     parser.add_argument('--output', type=Path)
     args = parser.parse_args()
-    result = verify(args.report, args.expect_full)
+    result = verify(args.report, args.expect_full or args.expect_full_fallback,
+                    expected_control=False if args.expect_full_fallback else None)
     if args.baseline:
         baseline = verify(args.baseline, True)
         result['baseline'] = baseline

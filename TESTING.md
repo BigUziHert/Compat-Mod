@@ -1,4 +1,20 @@
-# Version 1.2.14 verification record
+# Version 1.2.15 verification record
+
+## Entity Culling 1.12.1 follow-up — 2026-11-13
+
+The installed NeoForge 1.21.1 Entity Culling **1.12.1** jar retains byte-identical tick/render mixins, culling helper and mixin configuration from 1.12.0. Its changed `CullTask` adds the custom culling API described in the [upstream release](https://github.com/tr7zw/EntityCulling/releases/tag/1.12.1). The production change extends the verified reduced-tick gate through 1.12.1, with Sable still restricted to 2.0.6. Tests accept both audited releases and reject 1.12.2 and 1.13.0.
+
+The complete build and developer harness pass **191 unit tests**, with zero failures, errors or skips. Two fresh isolated Java 25/ZGC clients used the user's current mod/config/resource set, once with the user-installed **1.2.14** jar and once with the **1.2.15** candidate. Each captured **5,295 natural-wall/camera observations** and **1,695 injected-cull observations**. The candidate passes all **69 natural and 54 injected assertions**, including native interpolation, one tick-count advance, visible reentry, detachment, removed-support cleanup, native exemptions and fixture restoration. Stable hidden attachments recorded 420 reduced ticks in the natural run and 210 in the injected run, versus zero on 1.2.14. These are functional tick counts, not FPS measurements.
+
+The installed 1.2.14 baseline loads and passes the other assertions, but fails removed-support stale-reference cleanup in both suites. Its version gate disables the bridge that requests the transition tick, while the historical fallback protects only live support. Both removal controls deliberately seed stale references once after removing a real Sable platform; this establishes a cleanup-policy gap, not an independently reproduced ordinary multiplayer unload bug. Extending the gate activates the existing transition handling and clears the seeded state in the candidate. Unverified later dependency versions still use the historical fallback and are not certified by this check.
+
+All **34 structural checks** pass on freshly exported candidate classes: the bridge calls the three native Sable callbacks in their original order, the reduced hook runs only immediately before Entity Culling's single `aiStep`, normal full-tick callbacks remain, and render culling stays native. All **34 original PNGs** across the baseline and candidate were inspected for visibility, emergence/reentry and removal. This qualitative inspection does not establish pixel or accessory-detail equivalence. The two completed clients have no crash report or mixin-injection failure; unrelated pack/resource diagnostics remain in their logs.
+
+The candidate is `build/libs/emf-attachments-compat-1.21.1-1.2.15.jar`, SHA-256 `ae999106405ee38c7453e9df7bed3a7c192b01a6bde998d64fae7130d10f4635`. The user's 1.2.14 installation was confirmed and preserved. All **1,306 source-pack files** in the rebased snapshot remain unchanged during accepted testing; the earlier user-driven 1.2.13-to-1.2.14 replacement is recorded separately. No candidate installation or push was performed.
+
+Detailed local evidence is in [the follow-up report](verification/entityculling-1.12.1-1.2.15/REPORT.md) and `.local/entityculling-1.12.1-20261113/`. One abandoned preparation coincided with the user's install, and an earlier client hit a Create duplicate client-extension registration crash. Those attempts are preserved separately; the successful retry and candidate do not establish the cause of that isolated startup failure. The disposable options writer now explicitly uses UTF-8. These fixtures use client-only remote-player clones with packet-like targets in an integrated-server world, not independent multiplayer clients. No new FPS benchmark was run, and the Aether cape optimization from 1.2.14 is unchanged.
+
+# Historical version 1.2.14 verification record
 
 ## Third-person accessory allocation investigation — 2026-11-12
 

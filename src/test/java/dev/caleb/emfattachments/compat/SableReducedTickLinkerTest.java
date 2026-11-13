@@ -74,10 +74,12 @@ class SableReducedTickLinkerTest {
         String access = "dev.caleb.emfattachments.mixin.SableReducedTickAccessMixin";
         for (String mixin : List.of(reduced, access)) {
             assertTrue(plugin("2.0.6", "1.12.0").shouldApplyMixin("unused", mixin));
+            assertTrue(plugin("2.0.6", "1.12.1").shouldApplyMixin("unused", mixin));
             assertFalse(plugin("2.0.5", "1.12.0").shouldApplyMixin("unused", mixin));
             assertFalse(plugin("2.0.7", "1.12.0").shouldApplyMixin("unused", mixin));
             assertFalse(plugin("2.0.6", "1.11.3").shouldApplyMixin("unused", mixin));
-            assertFalse(plugin("2.0.6", "1.12.1").shouldApplyMixin("unused", mixin));
+            assertFalse(plugin("2.0.6", "1.12.2").shouldApplyMixin("unused", mixin));
+            assertFalse(plugin("2.0.6", "1.13.0").shouldApplyMixin("unused", mixin));
             assertFalse(new OptionalMixinPlugin(mod -> !mod.equals("sable"), (mod, min) -> false)
                     .shouldApplyMixin("unused", mixin));
         }

@@ -27,7 +27,7 @@ final class SableReducedTickLinker {
     static boolean supported(BiPredicate<String, String> atLeast) {
         // These exact release families were inspected. Unknown versions retain full ticks.
         return atLeast.test("sable", "2.0.6") && !atLeast.test("sable", "2.0.7")
-                && atLeast.test("entityculling", "1.12.0") && !atLeast.test("entityculling", "1.12.1");
+                && atLeast.test("entityculling", "1.12.0") && !atLeast.test("entityculling", "1.12.2");
     }
 
     static boolean link(ClassNode entity) {
