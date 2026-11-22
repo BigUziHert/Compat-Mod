@@ -4,7 +4,7 @@ plugins {
 }
 
 group = 'dev.caleb.emfattachments'
-version = '1.2.15'
+version = '1.2.19'
 base { archivesName = 'emf-attachments-compat-1.21.1' }
 java {
     toolchain.languageVersion = JavaLanguageVersion.of(21)
@@ -47,8 +47,26 @@ def extractSableCompileApi = tasks.register('extractSableCompileApi') {
         }
     }
 }
+// Create's contraption world and its elevator controllers expose classes bundled in Ponder.
+def createPonderApi = layout.buildDirectory.file('optional-api/create-ponder.jar')
+def extractCreatePonderApi = tasks.register('extractCreatePonderApi') {
+    def createJars = fileTree(dir: instanceMods.get(), include: ['create-1.21.1-*.jar'])
+    inputs.files(createJars)
+    outputs.file(createPonderApi)
+    doLast {
+        def ponder = zipTree(createJars.singleFile).matching {
+            include 'META-INF/jarjar/ponder-neoforge-*.jar'
+        }.singleFile
+        copy {
+            from ponder
+            into createPonderApi.get().asFile.parentFile
+            rename { 'create-ponder.jar' }
+        }
+    }
+}
 dependencies {
     compileOnly files(sableCompanionApi).builtBy(extractSableCompileApi)
+    compileOnly files(createPonderApi).builtBy(extractCreatePonderApi)
     compileOnly 'com.github.bawnorton.mixinsquared:mixinsquared-common:0.3.7'
     jarJar(implementation('com.github.bawnorton.mixinsquared:mixinsquared-neoforge:0.3.7')) {
         version { strictly '[0.3.7,)'; prefer '0.3.7' }

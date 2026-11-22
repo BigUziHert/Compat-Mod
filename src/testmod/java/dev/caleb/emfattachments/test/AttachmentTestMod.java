@@ -48,6 +48,21 @@ public final class AttachmentTestMod {
     public static TestResult current;
 
     public AttachmentTestMod() {
+        boolean elevatorLive = Boolean.getBoolean("emfattachments.sableElevatorLive");
+        boolean airshipMotion = Boolean.getBoolean("emfattachments.sableAirshipMotion");
+        if (elevatorLive || airshipMotion) {
+            if (elevatorLive) SableElevatorLiveSequence.register();
+            if (airshipMotion) SableAirshipMotionProbe.register();
+            NeoForge.EVENT_BUS.addListener(AttachmentTestMod::tick);
+            return;
+        }
+        if (Boolean.getBoolean("emfattachments.sableElevatorProbe")) {
+            SableElevatorCollisionProbe.register();
+            if (!Boolean.getBoolean("emfattachments.sableAuditOnly")) {
+                NeoForge.EVENT_BUS.addListener(AttachmentTestMod::tick);
+                return;
+            }
+        }
         if (Boolean.getBoolean("emfattachments.artificeOnly")) {
             NativeWorldReadiness.register();
             ArtificeLifecycleSequence.register();

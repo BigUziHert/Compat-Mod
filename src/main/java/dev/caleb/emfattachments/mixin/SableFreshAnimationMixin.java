@@ -1,11 +1,14 @@
 package dev.caleb.emfattachments.mixin;
 
+import dev.caleb.emfattachments.client.SableElevatorRiderCarry;
 import dev.caleb.emfattachments.client.SableFreshAnimationState;
 import dev.caleb.emfattachments.compat.EmfSableCompatibility;
 import dev.ryanhcode.sable.Sable;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.AbstractClientPlayer;
+import net.minecraft.client.player.LocalPlayer;
+import net.neoforged.fml.ModList;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import traben.entity_model_features.models.animation.EMFAnimationHandler;
@@ -34,6 +37,16 @@ public abstract class SableFreshAnimationMixin implements SableFreshAnimationSta
         // Fresh Player advances position history only once per frame, including shader and hand passes.
         float frame = EMFState.getFrameCounter();
         if (EMFMath.getEntityVariable("var.frame_counter_prev", Float.NaN) == frame) return;
+        if (player instanceof LocalPlayer local && ModList.get().isLoaded("create")) {
+            Object cabin = SableElevatorRiderCarry.animationSupport(local);
+            if (cabin != null) {
+                var context = access.emfattachments$getSableFreshAnimationState(true).forRenderContext(emf.isFirstPersonHand());
+                // Cabin movement and its brief settling correction are part of floor support, not a Fresh landing.
+                context.history.update(emf.variableMap(), cabin, frame, EMFMath.getEntityY(), 0, true);
+                context.elevatorGround(emf.variableMap(), frame);
+                return;
+            }
+        }
         SubLevel support = player.isPassenger() ? null : Sable.HELPER.getTrackingSubLevel(player);
         boolean upstreamHeight = EmfSableCompatibility.hasSteadyHeight();
         boolean active = support != null && !support.isRemoved()

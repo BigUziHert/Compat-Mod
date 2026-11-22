@@ -1,10 +1,12 @@
 package dev.caleb.emfattachments.compat;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.BiPredicate;
 import java.util.function.Predicate;
 import net.neoforged.fml.loading.FMLLoader;
+import org.apache.maven.artifact.versioning.ArtifactVersion;
 import org.apache.maven.artifact.versioning.DefaultArtifactVersion;
 import org.objectweb.asm.tree.ClassNode;
 import org.spongepowered.asm.mixin.extensibility.IMixinConfigPlugin;
@@ -70,6 +72,14 @@ public final class OptionalMixinPlugin implements IMixinConfigPlugin {
         if (mixinClassName.endsWith(".SablePlayerEntityCullingMixin")) {
             return modPresent("sable") && modPresent("entityculling");
         }
+        if (mixinClassName.endsWith(".SableElevatorCollisionMixin")
+                || mixinClassName.endsWith(".SableElevatorTravelMixin")) {
+            return discoveredVersionIs("sable", "2.0.6") && discoveredVersionIs("create", "6.0.10");
+        }
+        if (mixinClassName.endsWith(".SableElevatorThirdPersonMixin")) {
+            return discoveredVersionIs("sable", "2.0.6") && discoveredVersionIs("create", "6.0.10")
+                    && discoveredVersionIs("betterthirdperson", "1.9.0");
+        }
         if (mixinClassName.endsWith(".SableReducedTickAccessMixin")
                 || mixinClassName.endsWith(".SablePlayerReducedTickMixin")) {
             return modPresent("sable") && modPresent("entityculling")
@@ -80,6 +90,7 @@ public final class OptionalMixinPlugin implements IMixinConfigPlugin {
             return modPresent("sable");
         }
         if (mixinClassName.endsWith(".SableFreshAnimationMixin")
+                || mixinClassName.endsWith(".SableFreshElevatorGroundMixin")
                 || mixinClassName.endsWith(".SableFreshAnimationPlayerMixin")
                 || mixinClassName.endsWith(".SableFreshAsmEvaluationMixin")
                 || mixinClassName.endsWith(".SableFreshInterpreterEvaluationMixin")) {
@@ -216,10 +227,19 @@ public final class OptionalMixinPlugin implements IMixinConfigPlugin {
     }
 
     private static boolean discoveredVersionAtLeast(String modId, String minimum) {
+        return discoveredVersion(modId).filter(version -> version.compareTo(new DefaultArtifactVersion(minimum)) >= 0)
+                .isPresent();
+    }
+
+    private static boolean discoveredVersionIs(String modId, String expected) {
+        return discoveredVersion(modId).filter(version -> version.toString().equals(expected)).isPresent();
+    }
+
+    private static Optional<ArtifactVersion> discoveredVersion(String modId) {
         var loadingMods = FMLLoader.getLoadingModList();
         var file = loadingMods == null ? null : loadingMods.getModFileById(modId);
-        return file != null && file.getMods().stream().anyMatch(mod -> mod.getModId().equals(modId)
-                && mod.getVersion().compareTo(new DefaultArtifactVersion(minimum)) >= 0);
+        if (file == null) return Optional.empty();
+        return file.getMods().stream().filter(mod -> mod.getModId().equals(modId)).findFirst().map(mod -> mod.getVersion());
     }
 
     @Override public void onLoad(String mixinPackage) {}

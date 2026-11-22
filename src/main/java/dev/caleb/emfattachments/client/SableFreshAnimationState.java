@@ -15,6 +15,17 @@ public final class SableFreshAnimationState {
     private Matrix4d inverse;
     private Vector3d previousLocalPosition;
     private Vector3d carriedPosition;
+    private Map<String, Float> elevatorGroundVariables;
+    private float elevatorGroundFrame = Float.NaN;
+
+    public void elevatorGround(Map<String, Float> variables, float frame) {
+        elevatorGroundVariables = variables;
+        elevatorGroundFrame = frame;
+    }
+
+    public boolean reportsElevatorGround(Map<String, Float> variables, float frame) {
+        return elevatorGroundVariables == variables && elevatorGroundFrame == frame;
+    }
 
     /** EMF's hand map advances independently of the normal world/shadow map. */
     public SableFreshAnimationState forRenderContext(boolean firstPersonHand) {
@@ -26,7 +37,11 @@ public final class SableFreshAnimationState {
     /** Leaving support invalidates both histories, including a hand pass that is not currently drawn. */
     public void resetRenderContexts() {
         history.reset();
-        if (firstPersonHandState != null) firstPersonHandState.history.reset();
+        elevatorGroundVariables = null;
+        if (firstPersonHandState != null) {
+            firstPersonHandState.history.reset();
+            firstPersonHandState.elevatorGroundVariables = null;
+        }
     }
 
     /** Leaves the player's own world-vertical motion in world units, including on scaled decks. */

@@ -13,11 +13,20 @@ public final class TestOptionalMixinPlugin implements IMixinConfigPlugin {
         return FMLLoader.getLoadingModList().getModFileById(id) != null;
     }
     @Override public boolean shouldApplyMixin(String target, String mixin) {
+        if (mixin.endsWith(".SableElevatorRiderCarryProbeMixin")) {
+            return Boolean.getBoolean("emfattachments.sableElevatorCarryProbe") && loaded("emfattachments");
+        }
+        if (mixin.endsWith(".SableElevatorLiveCollisionProbeMixin")
+                || mixin.endsWith(".SableElevatorControlsPacketProbeMixin")) {
+            return Boolean.getBoolean("emfattachments.sableElevatorLive") && loaded("sable") && loaded("create");
+        }
+        if (Boolean.getBoolean("emfattachments.sableElevatorLive")) return false;
         if (Boolean.getBoolean("emfattachments.sableAuditOnly")
                 && !Boolean.getBoolean("emfattachments.artificeOnly")) {
             return mixin.endsWith(".NativeWorldReadinessMixin")
                     || mixin.contains("SableOcclusion") && loaded("sable") && loaded("entityculling");
         }
+        if (Boolean.getBoolean("emfattachments.sableElevatorProbe")) return false;
         if (mixin.contains("OverlapArtifice")) return Boolean.getBoolean("emfattachments.overlapGunBypass")
                 && loaded("emfattachments") && loaded("irons_artifice");
         if (mixin.contains("Overlap")) return Boolean.getBoolean("emfattachments.overlapAudit")
