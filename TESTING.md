@@ -1,3 +1,25 @@
+# Version 1.2.20-dev verification record
+
+The delivered development JAR is `eb7931c78bfea480df257087a3aac34bca5b2f5e0d3d7068e02b870a43d4c3b0`. A forced second compilation reproduced it. All 210 unit tests across 51 suites passed. The delivered build also passed 19 native deck velocity-transfer assertions, ten jump-return assertions and 22 earlier support checks.
+
+The active Artifacts Scarf of Invisibility reproduced the reported vanilla-looking walk in rear third person with iron armor, a Sophisticated Backpacks backpack and an Artifacts Power Glove. The pre-fix client submitted zero skin vertices and left the Fresh frame counter frozen throughout 220 frames. On the seventh candidate, all 220 invisible frames advanced Fresh, the armor and backpack followed the same animated torso, and skin vertices remained at zero. Removing the scarf restored the 288-vertex base draw.
+
+Two real clients also observed the same player on a disposable dedicated server. With the repaired client, the wearer's rear view evaluated the player pose on 207/207 active-scarf renders. The second client evaluated it on 220/220 renders, with 99 distinct Fresh frame counters. The armor, backpack, glove and scarf followed the same torso yaw from −0.179 to +0.300 radians on the second client. Both clients submitted zero skin vertices during invisibility.
+
+The final dedicated comparison used the shipped 1.2.19 JAR, physically removed compat, and the delivered 1.2.20-dev JAR on the two viewing clients. Each pair used the same server product and both ragdoll master switches disabled. The first two pairs evaluated zero active-scarf player animations in 220 renders per view. The delivered pair evaluated them on all 220 renders per view. The wearer had 220 distinct Fresh counter values and the remote viewer had 100. Armor, backpack, scarf and glove torso yaw matched on every frame with no visible skin.
+
+The released 1.2.19 client advanced about 0.832 blocks per full game tick at elevator takeoff and landing. The server instead saw about 1.66 blocks at takeoff and 0.11 at landing because position transmission preceded Create's final carry. A walk-off also lost actual physical momentum. The patch sends the completed position, transfers passive exits to Sable's ordinary drag, and retains genuine foot overlap past the original eight-tick contact timeout.
+
+On the final eighth candidate, two X jumps launched from the overlapping oak deck and Create cabin. The previously duplicated carrier step on return became 0.7837 + 0.0487 blocks on one jump and 0.7848 + 0.0489 on the other. Each rider held position for all 69 subsequent samples. The corresponding fully cleared Z return left the rider's foot 0.179 block outside the cabin and the rider fell.
+
+The final dedicated matrix completed both native floor controls, the same-cabin jump and 38 creative flight samples in three of four cases. Normal timing passed with either ragdoll configuration. Under an 85 ms delay every ten server ticks, the configured-disabled pair passed at 999.71 blocks/minute while the archive-enabled rider ragdolled on boarding at 998.94 before either floor request.
+
+The fifth candidate has SHA-256 `0608f8f7df59c8e3f2d5da95ce8f4e79787530e13234bee6954ef383bd5b7cf1` and passed 203 unit tests plus 22 handoff assertions. Integrated Bunny Hoppers jumps measured 998.67 blocks/min on X and 998.65 on Z. All 19 consecutive steps per axis matched the accepted server position deltas. X takeoff/landing measured 0.833037/0.832132 blocks and Z measured 0.833328/0.832324. The original first-person Z route completed both native requests and held its landing until deliberate flight. Actual overhangs with the center 0.181 and 0.102 blocks beyond the edge retained the floor for 69 samples on X and Z.
+
+An earlier candidate missed the moving cabin after two independent dedicated jumps under uneven ticks. The rider inherited either 1.328 or zero blocks of forward movement while the server carrier advanced roughly 0.833. The fifth candidate derives the synthetic release velocity at the rider's position from Sable's server-timed pose samples.
+
+The local evidence bundles contain the detailed reports at `verification/elevator-handoff-fix/FIX-REPORT.md` and `verification/scarf-invisibility-20261122/REPORT.md`.
+
 # Version 1.2.19 verification record
 
 ## Boarding an elevator on a moving Sable sublevel

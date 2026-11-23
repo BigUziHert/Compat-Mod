@@ -84,9 +84,18 @@ public final class SableElevatorLiveSequence {
             active.clientTick();
             return;
         }
-        if (!disposable(client) || client.screen != null || client.getOverlay() != null) return;
+        if (!disposable(client)) return;
         Path trigger = client.gameDirectory.toPath().resolve("emfattachments-sable-elevator-live.txt");
         if (!Files.isRegularFile(trigger)) return;
+        if (client.screen instanceof net.minecraft.client.gui.screens.DeathScreen && client.player.isDeadOrDying()) {
+            // A prior independent fixture's restored spawn may be below the flat world after teardown.
+            // Recover only between cases with a fresh trigger, never during a measured movement.
+            LogUtils.getLogger().info("Respawning disposable fixture player before new elevator scenario");
+            client.player.respawn();
+            client.setScreen(null);
+            return;
+        }
+        if (client.screen != null || client.getOverlay() != null) return;
         try {
             List<String> args = List.of(Files.readString(trigger).strip().split("\\s+"));
             Files.delete(trigger);
@@ -101,8 +110,31 @@ public final class SableElevatorLiveSequence {
                     throw new IllegalArgumentException("Moving boarding requires a horizontal route and the landing");
                 }
             }
+            boolean jumpOnly = args.contains("jump-only");
+            if (jumpOnly && (!args.contains("direct") || args.contains("moving-board") || args.contains("controls")
+                    || args.contains("air-in-ride") || args.contains("ride-actions") || args.contains("flight-only"))) {
+                throw new IllegalArgumentException("A single cabin jump requires direct placement and no other action sequence");
+            }
             active = new Session(client, plan, camera, args.contains("controls"), args.contains("direct"),
-                    args.contains("release"), movingBoard, args.contains("ride-actions"), args.contains("air-in-ride"));
+                    args.contains("release"), movingBoard, args.contains("ride-actions"), args.contains("air-in-ride"),
+                    args.contains("wall"), args.contains("vertical-turn"));
+            active.cabinWalk = args.contains("cabin-walk");
+            active.reboard = args.contains("reboard");
+            active.steadyOrbit = args.contains("steady-orbit");
+            active.actionsAtSpeed = args.contains("actions-at-speed");
+            active.flightOnly = args.contains("flight-only");
+            active.jumpOnly = jumpOnly;
+            active.passiveWalkOff = args.contains("passive-walk-off");
+            active.bunnySlippers = args.contains("bunny-slippers");
+            active.sprintJump = args.contains("sprint-jump");
+            active.edgeJump = args.contains("edge-jump");
+            active.closeEdge = args.contains("close-edge");
+            active.overhang = args.contains("overhang");
+            active.tightToe = args.contains("tight-toe") || args.contains("clear-toe");
+            active.clearToe = args.contains("clear-toe");
+            active.toeInside = active.clearToe ? 0.015 : args.contains("toe-15") ? 0.15
+                    : args.contains("toe-20") ? 0.20 : args.contains("toe-25") ? 0.25 : 0.10;
+            active.survivalJump = jumpOnly && args.contains("survival");
             active.beginScene();
         } catch (Exception error) {
             LogUtils.getLogger().error("Could not start the live elevator fixture", error);
@@ -118,7 +150,7 @@ public final class SableElevatorLiveSequence {
         try {
             scene.serverTick(player);
         } catch (Exception error) {
-            scene.failure = error.toString();
+            if (scene.failure == null) scene.failure = error.toString();
             LogUtils.getLogger().error("Live elevator fixture failed", error);
         }
     }
@@ -136,7 +168,7 @@ public final class SableElevatorLiveSequence {
     }
 
     private enum Stage {
-        BUILD, ASSEMBLE, WAIT_FOR_CLIENT, CARRIER_RUNUP, BOARDING, SETTLE, MOVING_CARRIER,
+        BUILD, ASSEMBLE, WAIT_FOR_CLIENT, CARRIER_RUNUP, BOARDING, RETURN_DECK, SETTLE, MOVING_CARRIER,
         RIDING, RETURN_CONTROL, RIDER_ACTIONS, FINISHED
     }
 
@@ -170,6 +202,20 @@ public final class SableElevatorLiveSequence {
         final boolean rideActions;
         final boolean airInRide;
         final List<Map<String, Object>> results = new ArrayList<>();
+        final boolean wall;
+        final boolean verticalTurn;
+        boolean cabinWalk;
+        boolean reboard;
+        boolean steadyOrbit;
+        boolean actionsAtSpeed;
+        boolean flightOnly;
+        boolean jumpOnly;
+        boolean passiveWalkOff;
+        boolean bunnySlippers;
+        boolean sprintJump;
+        boolean edgeJump, closeEdge, overhang, tightToe, clearToe;
+        double toeInside;
+        boolean survivalJump;
         volatile Scene scene;
         int index;
         SableElevatorCameraProbe camera;
@@ -181,10 +227,12 @@ public final class SableElevatorLiveSequence {
         boolean forwardHeld;
         boolean jumpHeld;
         boolean sprintHeld;
+        boolean shiftHeld;
         boolean facedCabin;
 
         Session(Minecraft client, List<Motion> motions, String cameraMode, boolean controls, boolean direct,
-                boolean release, boolean movingBoard, boolean rideActions, boolean airInRide) {
+                boolean release, boolean movingBoard, boolean rideActions, boolean airInRide,
+                boolean wall, boolean verticalTurn) {
             this.client = client;
             this.player = client.player;
             this.server = client.getSingleplayerServer();
@@ -196,12 +244,16 @@ public final class SableElevatorLiveSequence {
             this.movingBoard = movingBoard;
             this.rideActions = rideActions;
             this.airInRide = airInRide;
+            this.wall = wall;
+            this.verticalTurn = verticalTurn;
         }
 
         void beginScene() {
+            if (SableElevatorPhaseProbe.enabled()) SableElevatorPhaseProbe.reset();
             Motion motion = motions.get(index);
             boolean boardAtSpeed = movingBoard && (motion.x != 0 || motion.z != 0);
             camera = new SableElevatorCameraProbe(cameraMode);
+            if (steadyOrbit) camera.useSteadyOrbit();
             camera.begin(client, boardAtSpeed);
             if (controls) {
                 upInteraction = new SableElevatorControlsProbe(1);
@@ -210,10 +262,28 @@ public final class SableElevatorLiveSequence {
             forwardHeld = client.options.keyUp.isDown();
             jumpHeld = client.options.keyJump.isDown();
             sprintHeld = client.options.keySprint.isDown();
+            shiftHeld = client.options.keyShift.isDown();
             lookTicks = 0;
             lookDirection = 0;
             facedCabin = false;
-            scene = new Scene(motion, controls, direct, release, boardAtSpeed, rideActions, airInRide);
+            Scene next = new Scene(motion, controls, direct, release, boardAtSpeed, rideActions, airInRide);
+            next.wall = wall;
+            next.verticalTurn = verticalTurn;
+            next.reboard = reboard && boardAtSpeed;
+            next.actionsAtSpeed = actionsAtSpeed || jumpOnly || passiveWalkOff;
+            next.passiveWalkOff = passiveWalkOff;
+            next.jumpOnly = jumpOnly;
+            next.bunnySlippers = bunnySlippers;
+            next.slipperFlight = bunnySlippers && flightOnly && rideActions;
+            next.sprintJump = sprintJump;
+            next.edgeJump = edgeJump;
+            next.closeEdge = closeEdge;
+            next.overhang = overhang;
+            next.tightToe = tightToe;
+            next.clearToe = clearToe;
+            next.toeInside = toeInside;
+            next.survivalJump = survivalJump;
+            scene = next;
         }
 
         void clientTick() {
@@ -243,8 +313,9 @@ public final class SableElevatorLiveSequence {
                 if (current.restoreRequested) return;
                 if (current.failure != null || current.stage == Stage.FINISHED) {
                     client.options.keyUp.setDown(forwardHeld);
-                    if (rideActions || airInRide) client.options.keyJump.setDown(jumpHeld);
-                    if (rideActions) {
+                    if (tightToe) client.options.keyShift.setDown(shiftHeld);
+                    if (rideActions || airInRide || jumpOnly) client.options.keyJump.setDown(jumpHeld);
+                    if (rideActions || jumpOnly) {
                         client.options.keySprint.setDown(sprintHeld);
                     }
                     camera.finish(client);
@@ -257,13 +328,27 @@ public final class SableElevatorLiveSequence {
                 if (floor == null) return;
                 current.clientReady = true;
                 current.takeClientSample(player, cabin, floor);
-                if (current.stage == Stage.SETTLE || current.stage == Stage.CARRIER_RUNUP) {
+                if (current.stage == Stage.SETTLE) {
                     camera.ensureAtStart(client);
                     current.cameraReady = camera.matches(client);
                 }
                 steerBoarding(current);
+                if (cabinWalk && current.stage == Stage.MOVING_CARRIER && current.elapsed <= 21) {
+                    int t = current.elapsed;
+                    float yaw = t < 11 ? 180 : 0;
+                    player.setYRot(yaw);
+                    player.setXRot(0);
+                    var freeCamera = BetterThirdPerson.getCameraManager().getCustomCamera();
+                    if (freeCamera != null) freeCamera.setCameraRotation(new Rotation(yaw, 0));
+                    client.options.keyUp.setDown((t >= 2 && t <= 5) || (t >= 13 && t <= 16));
+                    return;
+                }
                 if (airInRide) steerAirInRide(current, cabin, floor);
-                if (current.stage == Stage.RIDER_ACTIONS) steerRiderActions(current);
+                if (current.stage == Stage.RIDER_ACTIONS) {
+                    if (passiveWalkOff) steerPassiveWalkOff(current);
+                    else if (jumpOnly) steerSingleJump(current);
+                    else steerRiderActions(current);
+                }
                 boolean walkingOff = release && steerRelease(current, cabin, floor);
                 if (!walkingOff && current.stage == Stage.RIDING && current.travelingVertically
                         && camera.matches(client)) {
@@ -300,6 +385,10 @@ public final class SableElevatorLiveSequence {
             int tick = player.tickCount;
             boolean withinFloorContact = Math.abs(player.getY() - floor.y) < 0.2 && Scene.overCabinFloor(player, cabin);
             if (current.rideDirection > 0) {
+                if (flightOnly) {
+                    client.options.keyJump.setDown(false);
+                    return;
+                }
                 if (current.rideJumpTick < 0 && withinFloorContact) current.rideJumpTick = tick;
                 client.options.keyJump.setDown(tick == current.rideJumpTick);
                 return;
@@ -309,8 +398,116 @@ public final class SableElevatorLiveSequence {
                     (tick == current.rideFlightTick || tick >= current.rideFlightTick + 5 && tick < current.rideFlightTick + 15));
         }
 
-        private void steerRiderActions(Scene current) {
+        private void steerPassiveWalkOff(Scene current) {
             int tick = ++current.riderActionTick;
+            var rider = current.lastClientSample;
+            var authority = current.lastSample;
+            if (current.releaseInputTick < 0) {
+                boolean ready = tick >= 8 && current.serverGearReady && BunnySlippersEquipment.ready(player, bunnySlippers)
+                        && authority != null && authority.overCabinFloor && Math.abs(authority.error.y) < 0.16
+                        && rider.overCabinFloor && Math.abs(rider.error.y) < 0.10
+                        && !rider.flying && !rider.passenger && !rider.ragdolled && !authority.ragdolled;
+                if (!ready) return;
+                current.releaseInputTick = player.tickCount;
+                current.clientGearAtJump = BunnySlippersEquipment.sample(player);
+            }
+            if (!rider.overCabinFloor && current.releaseExitTick < 0) current.releaseExitTick = player.tickCount;
+            if (current.releaseExitTick >= 0 && rider.error.y < -0.08 && current.unsupportedTick < 0) {
+                current.unsupportedTick = player.tickCount;
+            }
+            // Walk north, clear of both the controls and the lower planks. Release only after the feet fall.
+            if (current.unsupportedTick >= 0) return;
+            player.setYRot(180);
+            player.setXRot(0);
+            var view = BetterThirdPerson.getCameraManager().getCustomCamera();
+            if (view != null) view.setCameraRotation(new Rotation(180, 0));
+            client.options.keyUp.setDown(true);
+        }
+
+        private void steerSingleJump(Scene current) {
+            int tick = ++current.riderActionTick;
+            client.options.keyJump.setDown(false);
+            client.options.keySprint.setDown(false);
+            if (current.jumpIssuedAt >= 0) return;
+
+            var rider = current.lastClientSample;
+            var server = current.lastSample;
+            if (client.gameMode == null) return;
+            var clientMode = client.gameMode.getPlayerMode();
+            current.jumpClientGameMode = clientMode.getName();
+            if (clientMode != (current.survivalJump ? GameType.SURVIVAL : GameType.CREATIVE)) return;
+            boolean supported = rider.overCabinFloor && Math.abs(rider.error.y) < 0.10
+                    && !rider.passenger && !rider.ragdolled && !rider.flying
+                    && server != null && server.overCabinFloor && Math.abs(server.error.y) < 0.16
+                    && !server.ragdolled && !server.passenger;
+            if (current.edgeJump && current.resolvedRiderLocal != null && server != null) {
+                // The earlier Post sample can be one entire carrier step behind at a trailing edge.
+                var at = current.resolvedRiderLocal;
+                supported = at.x > -8 && at.x < 1 && at.z > -4 && at.z < 5 && Math.abs(at.y - 1) < 0.10
+                        && Math.abs(server.error.y) < 0.16 && !rider.passenger && !rider.ragdolled && !rider.flying
+                        && !server.ragdolled && !server.passenger;
+            }
+            if (!supported || !current.serverGearReady || !BunnySlippersEquipment.ready(player, bunnySlippers)) {
+                current.supportTicksBeforeJump = 0;
+                return;
+            }
+            if (current.edgeJump) {
+                var endpoint = current.resolvedRiderLocal;
+                if (endpoint == null) return;
+                double edge = current.motion.x != 0 ? -8.0 : -4.0;
+                double along = current.motion.x != 0 ? endpoint.x : endpoint.z;
+                // Native air drag costs roughly 0.45 block bare and 0.85 with Hoppers over this jump.
+                double closer = current.overhang ? (current.motion.x != 0 ? 0.85 : 0.65) : current.closeEdge ? 0.21 : 0;
+                double launchMargin = (bunnySlippers ? 1.38 : 0.96) - closer;
+                // The thin-rim probe starts at its measured spot before assembly run-up.
+                // All motion during its launch and return comes from the game.
+                if (!current.tightToe && current.edgeStopTick < 0 && along > edge + launchMargin + 0.58) {
+                    float yaw = current.motion.x != 0 ? 90 : 180;
+                    player.setYRot(yaw);
+                    player.setXRot(0);
+                    var view = BetterThirdPerson.getCameraManager().getCustomCamera();
+                    if (view != null) view.setCameraRotation(new Rotation(yaw, 0));
+                    client.options.keyUp.setDown(true);
+                    return;
+                }
+                if (current.edgeStopTick < 0) current.edgeStopTick = tick;
+                if (tick - current.edgeStopTick < 11) return;
+                current.edgeLaunchMargin = along - edge;
+            }
+            if (++current.supportTicksBeforeJump < 3) return;
+            if (sprintJump) {
+                // Sprint perpendicular to carrier travel so the carrier-axis trajectory remains interpretable.
+                float yaw = current.motion.x != 0 ? 180 : -90;
+                player.setYRot(yaw);
+                player.setXRot(0);
+                var detached = BetterThirdPerson.getCameraManager().getCustomCamera();
+                if (detached != null) detached.setCameraRotation(new Rotation(yaw, 0));
+                client.options.keyUp.setDown(true);
+                client.options.keySprint.setDown(true);
+                if (!player.isSprinting() || rider.forwardInput <= 0) return;
+            }
+            if (tick < 8) return;
+            current.clientGearAtJump = BunnySlippersEquipment.sample(player);
+            current.jumpLaunchClient = rider;
+            current.jumpLaunchServer = server;
+            current.jumpInputClientTick = player.tickCount;
+            current.jumpIssuedAt = tick;
+            client.options.keyJump.setDown(true);
+        }
+
+        private void steerRiderActions(Scene current) {
+            if (current.slipperFlight && current.riderActionTick == 0
+                    && (!current.serverGearReady || !BunnySlippersEquipment.ready(player, true))) return;
+            int tick = ++current.riderActionTick;
+            if (current.slipperFlight) {
+                if (tick == 55) {
+                    current.firstFlightTapClientTick = player.tickCount;
+                    current.clientGearAtJump = BunnySlippersEquipment.sample(player);
+                }
+                if (player.getAbilities().flying && current.activeFlightGearClient.isEmpty()) {
+                    current.activeFlightGearClient = BunnySlippersEquipment.sample(player);
+                }
+            }
             if (tick == 1) {
                 // Run along the open northern half of the cabin, away from the controls.
                 player.setYRot(180);
@@ -323,7 +520,7 @@ public final class SableElevatorLiveSequence {
             client.options.keyUp.setDown(running);
             client.options.keySprint.setDown(running);
             if (running) camera.lookAround(tick - 2);
-            client.options.keyJump.setDown(tick == 26 || tick == 55 || (tick >= 60 && tick < 72));
+            client.options.keyJump.setDown((!flightOnly && tick == 26) || tick == 55 || (tick >= 60 && tick < 72));
         }
 
         private boolean steerRelease(Scene current, AbstractContraptionEntity cabin, Vec3 floor) {
@@ -347,6 +544,15 @@ public final class SableElevatorLiveSequence {
         }
 
         private void steerBoarding(Scene current) {
+            if (current.stage == Stage.RETURN_DECK) {
+                player.setYRot(90);
+                player.setXRot(0);
+                var freeCamera = BetterThirdPerson.getCameraManager().getCustomCamera();
+                if (freeCamera != null) freeCamera.setCameraRotation(new Rotation(90, 0));
+                client.options.keyUp.setDown(true);
+                facedCabin = false;
+                return;
+            }
             if (current.stage != Stage.BOARDING) {
                 client.options.keyUp.setDown(false);
                 return;
@@ -372,6 +578,11 @@ public final class SableElevatorLiveSequence {
                 var cabin = current.clientCabin(client);
                 if (cabin == null) return;
                 Vec3 floor = current.clientFloor(cabin);
+                if (floor != null && current.edgeJump) {
+                    var carrier = Sable.HELPER.getContaining(cabin);
+                    var resolved = carrier == null ? player.position() : carrier.logicalPose().transformPositionInverse(player.position());
+                    current.resolvedRiderLocal = cabin.toLocalVector(resolved, 1);
+                }
                 if (floor != null && current.cameraRows.size() < 3600) {
                     var sample = camera.sample(client, current.platformId, floor, current.phaseName(),
                             current.travelingVertically);
@@ -383,6 +594,7 @@ public final class SableElevatorLiveSequence {
                             renderedFloor = carrier.renderPose(partial).transformPosition(renderedFloor);
                         }
                         sample.put("riderRenderedYAboveFloor", Mth.lerp(partial, player.yo, player.getY()) - renderedFloor.y);
+                        if (current.wall) observeWall(sample, renderedFloor, partial);
                         if (ModList.get().isLoaded("entity_model_features")) {
                             sample.put("freshAnimation", FreshAnimationProbe.sample(player));
                         }
@@ -397,6 +609,22 @@ public final class SableElevatorLiveSequence {
                 current.failure = error.toString();
                 LogUtils.getLogger().error("Live elevator camera observation failed", error);
             }
+        }
+
+        // The wall case uses a level, unrotated cabin. Its stone wall spans local [-8,1] x [1,4] x [-3,-2].
+        void observeWall(Map<String, Object> sample, Vec3 floor, float partial) {
+            Vec3 origin = floor.subtract(PoweredElevatorFixture.CABIN_FEET);
+            var bounds = new net.minecraft.world.phys.AABB(-8, 1, -3, 1, 4, -2).move(origin);
+            Vec3 eye = Sable.HELPER.getEyePositionInterpolated(player, partial);
+            var camera = client.gameRenderer.getMainCamera();
+            Vec3 pos = camera.getPosition();
+            Vec3 unobstructed = eye.add(Vec3.directionFromRotation(camera.getXRot(), camera.getYRot()).scale(-4));
+            var ideal = bounds.clip(eye, unobstructed);
+            var actual = bounds.clip(eye, pos);
+            sample.put("wallAlongRearBoom", ideal.isPresent());
+            sample.put("wallIdealHitDistance", ideal.map(eye::distanceTo).orElse(-1.0));
+            sample.put("cameraInWall", bounds.contains(pos));
+            sample.put("wallBetweenEyeAndCamera", actual.isPresent() && actual.get().distanceTo(pos) > 0.01);
         }
 
         void finish() throws java.io.IOException {
@@ -465,6 +693,26 @@ public final class SableElevatorLiveSequence {
         int releaseInputTick = -1, releaseExitTick = -1;
         double releaseMinimumY;
         boolean boarded;
+        boolean wall, verticalTurn, reboard, backOnDeck, actionsAtSpeed;
+        boolean jumpOnly, bunnySlippers, sprintJump, slipperFlight, survivalJump, passiveWalkOff, edgeJump, closeEdge, overhang, tightToe, clearToe;
+        Vec3 resolvedRiderLocal;
+        int edgeStopTick = -1;
+        double toeInside;
+        double edgeLaunchMargin;
+        volatile int unsupportedTick = -1;
+        String jumpServerGameMode, jumpClientGameMode;
+        int firstFlightTapClientTick = -1;
+        Map<String, Object> activeFlightGearClient = Map.of();
+        Map<String, Object> activeFlightGearServer = Map.of();
+        BunnySlippersEquipment.Saved originalJumpEquipment;
+        volatile boolean serverGearReady;
+        volatile int jumpIssuedAt = -1;
+        int jumpInputClientTick = -1, supportTicksBeforeJump;
+        ClientSample jumpLaunchClient;
+        ServerSample jumpLaunchServer;
+        Map<String, Object> clientGearAtJump = Map.of();
+        Map<String, Object> serverGearAtJump = Map.of();
+        int boardings;
         int rideJumpTick = -1;
         int rideFlightTick = -1;
 
@@ -486,8 +734,12 @@ public final class SableElevatorLiveSequence {
                         releasedRagdoll = ExpandedRagdollRecovery.release(player);
                         if (rig != null) rig.close();
                     } finally {
-                        if (original != null) original.restore(player);
-                        restored = true;
+                        try {
+                            if (originalJumpEquipment != null) originalJumpEquipment.restore(player);
+                            if (original != null) original.restore(player);
+                        } finally {
+                            restored = true;
+                        }
                     }
                 }
                 return;
@@ -513,7 +765,7 @@ public final class SableElevatorLiveSequence {
                 }
                 case CARRIER_RUNUP -> {
                     var rider = lastClientSample;
-                    if (rider != null && rider.trackingPlatform && rider.grounded && cameraReady) walkwayTracked = true;
+                    if (rider != null && rider.trackingPlatform && rider.grounded) walkwayTracked = true;
                     if (walkwayTracked) rampTicks++;
                     drive(Math.min(1.0, rampTicks / 12.0));
                     if (rampTicks >= 26) stage(Stage.BOARDING);
@@ -528,15 +780,24 @@ public final class SableElevatorLiveSequence {
                             : player.getX() >= rig.floor().x - 0.45;
                     if (walkwayTracked && crossed) {
                         boarded = true;
+                        boardings++;
                         stage(Stage.SETTLE);
                     } else if (elapsed > 140) throw new IllegalStateException("Player could not board from the Sable deck (tracked="
                             + walkwayTracked + ", floor=" + rig.floor() + ", rider=" + player.position() + ")");
+                }
+                case RETURN_DECK -> {
+                    drive(1);
+                    var rider = lastClientSample;
+                    if (rider != null && !rider.overCabinFloor && rider.error.x < -5.3 && rider.trackingPlatform && rider.grounded) {
+                        backOnDeck = true;
+                        stage(Stage.BOARDING);
+                    } else if (elapsed > 100) throw new IllegalStateException("Walk back to the moving deck failed");
                 }
                 case SETTLE -> {
                     drive(movingBoard ? 1 : 0);
                     var rider = lastClientSample;
                     Vec3 error = movingBoard && rider != null ? rider.error.vector() : player.position().subtract(rig.floor());
-                    boolean nearFloor = error.horizontalDistance() < (movingBoard ? 1.25 : 0.9) && Math.abs(error.y) < 0.15
+                    boolean nearFloor = error.subtract(toeStartOffset()).horizontalDistance() < (movingBoard ? 1.25 : 0.9) && Math.abs(error.y) < 0.15
                             && (!movingBoard || rider != null && rider.overCabinFloor && !rider.ragdolled)
                             && !ExpandedRagdollRecovery.active(player) && !player.isPassenger() && !player.isNoGravity();
                     boolean stable = nearFloor && previousSettledOffset != null && error.distanceTo(previousSettledOffset) < 0.06;
@@ -545,7 +806,7 @@ public final class SableElevatorLiveSequence {
                     groundedWhileSettling |= nearFloor && (player.onGround() || clientGrounded);
                     boolean feetTouchFloor = groundedWhileSettling || Math.abs(error.y) < 0.002;
                     if (elapsed >= 40 && stableTicks >= 6 && feetTouchFloor && cameraReady) {
-                        stage(Stage.MOVING_CARRIER);
+                        stage(reboard && !backOnDeck ? Stage.RETURN_DECK : Stage.MOVING_CARRIER);
                     } else if (elapsed > 140) {
                         throw new IllegalStateException("Rider or requested camera did not settle on the cabin: "
                                 + error + ", camera ready=" + cameraReady);
@@ -553,6 +814,11 @@ public final class SableElevatorLiveSequence {
                 }
                 case MOVING_CARRIER -> {
                     drive(movingBoard ? 1.0 : Math.min(1.0, elapsed / 12.0));
+                    if (actionsAtSpeed) {
+                        // Direct cabin placement bypasses a failed deck seam. Observe natural support through run-up.
+                        if (elapsed >= 32) stage(Stage.RIDER_ACTIONS);
+                        break;
+                    }
                     if (!controls && elapsed == 24) rig.callFloor(PoweredElevatorFixture.TOP_FLOOR);
                     int target = rig.target();
                     if (target == PoweredElevatorFixture.TOP_FLOOR && acceptedControl(target, upControlTarget)) {
@@ -587,12 +853,42 @@ public final class SableElevatorLiveSequence {
                 }
                 case RIDER_ACTIONS -> {
                     drive(1);
-                    if (riderActionTick >= LAST_RIDER_ACTION_TICK) stage(Stage.FINISHED);
+                    if (slipperFlight) {
+                        if (!serverGearReady) serverGearReady = BunnySlippersEquipment.ready(player, true);
+                        if (riderActionTick >= 55 && serverGearAtJump.isEmpty()) {
+                            serverGearAtJump = BunnySlippersEquipment.sample(player);
+                        }
+                        if (player.getAbilities().flying && activeFlightGearServer.isEmpty()) {
+                            activeFlightGearServer = BunnySlippersEquipment.sample(player);
+                        }
+                    }
+                    if (passiveWalkOff) {
+                        serverGearReady = BunnySlippersEquipment.ready(player, bunnySlippers);
+                        if (serverGearReady && serverGearAtJump.isEmpty()) serverGearAtJump = BunnySlippersEquipment.sample(player);
+                        if (unsupportedTick >= 0 && lastClientSample.tick - unsupportedTick >= 25) stage(Stage.FINISHED);
+                        else if (elapsed > 110) throw new IllegalStateException("Passive walker never cleared cabin floor");
+                    } else if (jumpOnly) {
+                        if (jumpIssuedAt < 0) {
+                            serverGearReady = BunnySlippersEquipment.ready(player, bunnySlippers);
+                            if (serverGearReady && serverGearAtJump.isEmpty()) {
+                                serverGearAtJump = BunnySlippersEquipment.sample(player);
+                            }
+                            if (elapsed > (tightToe ? 175 : 80)) throw new IllegalStateException("Single jump did not get both-side floor/equipment support");
+                        } else if (riderActionTick >= jumpIssuedAt + jumpObservationTicks()) {
+                            stage(Stage.FINISHED);
+                        } else if (elapsed > 190) {
+                            throw new IllegalStateException("Single jump observation did not finish");
+                        }
+                    } else if (riderActionTick >= LAST_RIDER_ACTION_TICK) stage(Stage.FINISHED);
                     else if (elapsed > 130) throw new IllegalStateException("Rider actions did not finish");
                 }
                 case FINISHED -> { }
             }
             if (rig.cabin() != null) takeServerSample(player);
+        }
+
+        private int jumpObservationTicks() {
+            return survivalJump ? 27 : 80;
         }
 
         private boolean acceptedControl(int floor, int requestedY) {
@@ -612,18 +908,31 @@ public final class SableElevatorLiveSequence {
 
         private void build(ServerPlayer player) {
             original = new Snapshot(player);
+            if (jumpOnly || slipperFlight || passiveWalkOff) {
+                originalJumpEquipment = bunnySlippers
+                        ? BunnySlippersEquipment.equip(player) : BunnySlippersEquipment.bare(player);
+            }
             int x = player.getBlockX() + 12;
             int z = player.getBlockZ() + 12;
             int y = player.serverLevel().getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z) + 22;
             rig = new PoweredElevatorFixture(player.serverLevel(), new BlockPos(x, y, z), motion.sable);
-            rig.build();
+            rig.build(wall);
             if (rig.platform != null) platformId = rig.platform.getUniqueId();
             stage(Stage.ASSEMBLE);
         }
 
+        private Vec3 toeStartOffset() {
+            if (!tightToe) return Vec3.ZERO;
+            // X would otherwise share feet with the adjacent oak boarding deck at z=-0.5.
+            // Offset across the smooth-stone cabin to its unobstructed trailing lip.
+            return motion.x != 0 ? new Vec3(-4.5 + toeInside, 0, -2.65)
+                    : new Vec3(0, 0, -3.5 + toeInside);
+        }
+
         private void spawnRider(ServerPlayer player) {
-            Vec3 feet = boardFromWalkway ? rig.boardingPosition() : rig.floor().add(0, 0.03, 0);
-            player.setGameMode(GameType.CREATIVE);
+            Vec3 feet = boardFromWalkway ? rig.boardingPosition() : rig.floor().add(toeStartOffset()).add(0, 0.03, 0);
+            player.setGameMode(survivalJump ? GameType.SURVIVAL : GameType.CREATIVE);
+            if (jumpOnly) jumpServerGameMode = player.gameMode.getGameModeForPlayer().getName();
             player.setItemSlot(EquipmentSlot.MAINHAND, ItemStack.EMPTY);
             player.setItemSlot(EquipmentSlot.OFFHAND, ItemStack.EMPTY);
             player.inventoryMenu.broadcastChanges();
@@ -639,7 +948,8 @@ public final class SableElevatorLiveSequence {
 
         private void drive(double scale) {
             double speed = PoweredElevatorFixture.SPEED_PER_SECOND * scale;
-            rig.drive(speed * motion.x, speed * motion.z);
+            boolean turning = verticalTurn && stage == Stage.RIDING;
+            rig.drive(speed * motion.x, speed * motion.z, turning ? 0.075 : 0, turning ? 0.055 : 0);
         }
 
         private void stage(Stage next) {
@@ -651,7 +961,7 @@ public final class SableElevatorLiveSequence {
         String phaseName() {
             String phase = switch (stage) {
                 case RIDING -> rideDirection > 0 ? "ASCENDING" : "DESCENDING";
-                case RIDER_ACTIONS -> riderActionTick < 26 ? "RUN_LOOK" : riderActionTick < 55 ? "JUMP" : "FLY";
+                case RIDER_ACTIONS -> passiveWalkOff ? "PASSIVE_WALK_OFF" : jumpOnly ? "SINGLE_JUMP" : riderActionTick < 26 ? "RUN_LOOK" : riderActionTick < 55 ? "JUMP" : "FLY";
                 default -> stage.name();
             };
             return motion.label + ":" + phase;
@@ -663,7 +973,8 @@ public final class SableElevatorLiveSequence {
             ServerSample row = new ServerSample(stage.name(), gameTick, System.nanoTime(), rig.cabin().getId(),
                     rig.rpm(), rig.cabin().getY(), Numbers.of(rig.carrierPosition()), Numbers.of(floor), Numbers.of(error),
                     player.onGround(), tracking(player), rig.target(), rideDirection, ExpandedRagdollRecovery.active(player),
-                    player.isPassenger(), overCabinFloor(player, rig.cabin()));
+                    player.isPassenger(), overCabinFloor(player, rig.cabin()), rig.platform == null ? 0 :
+                    Math.toDegrees(rig.platform.logicalPose().orientation().getEulerAnglesYXZ(new org.joml.Vector3d()).y));
             lastSample = row;
             serverRows.add(row);
         }
@@ -723,6 +1034,56 @@ public final class SableElevatorLiveSequence {
             var ridden = serverRows.stream().filter(s -> s.stage.equals(Stage.RIDING.name())).toList();
             var report = new LinkedHashMap<String, Object>();
             report.put("scenario", motion.label);
+            report.put("cabinWall", wall);
+            report.put("verticalTurn", verticalTurn);
+            report.put("groundedBackOnDeck", backOnDeck);
+            report.put("completedBoardings", boardings);
+            report.put("actionsAtSpeed", actionsAtSpeed);
+            if (jumpOnly) {
+                var jump = new LinkedHashMap<String, Object>();
+                jump.put("bunnySlippersRequested", bunnySlippers);
+                jump.put("sprintRequested", sprintJump);
+                if (edgeJump) jump.put("trailingEdgeDistanceAtInput", edgeLaunchMargin);
+                if (tightToe) jump.put("toeProbe", toeInside + " inside from assembly on unshared rim, hands off");
+                jump.put("inputClientTick", jumpInputClientTick);
+                jump.put("inputActionTick", jumpIssuedAt);
+                jump.put("supportedTicksBeforeInput", supportTicksBeforeJump);
+                jump.put("serverEquipment", serverGearAtJump);
+                jump.put("clientEquipment", clientGearAtJump);
+                jump.put("launchClient", jumpLaunchClient);
+                jump.put("launchServer", jumpLaunchServer);
+                if (jumpLaunchServer != null) {
+                    var start = serverRows.stream().filter(row -> row.tick == jumpLaunchServer.tick - 10)
+                            .findFirst().orElse(null);
+                    if (start != null) {
+                        double displacement = Math.hypot(jumpLaunchServer.carrier.x - start.carrier.x,
+                                jumpLaunchServer.carrier.z - start.carrier.z);
+                        jump.put("carrierStartTick", start.tick);
+                        jump.put("carrierEndTick", jumpLaunchServer.tick);
+                        jump.put("prelaunchBlocksPerMinuteByTime",
+                                displacement * 60e9 / (jumpLaunchServer.nanoTime - start.nanoTime));
+                        jump.put("prelaunchBlocksPerMinuteByTicks", horizontalSpeed(start, jumpLaunchServer));
+                    }
+                }
+                jump.put("plannedObservationTicksAfterTap", jumpObservationTicks());
+                jump.put("requestedGameMode", survivalJump ? "survival" : "creative");
+                jump.put("serverGameMode", jumpServerGameMode);
+                jump.put("clientGameMode", jumpClientGameMode);
+                report.put("jumpProbe", jump);
+            }
+            if (passiveWalkOff) {
+                report.put("passiveWalkOff", Map.of("inputTick", releaseInputTick, "footprintExitTick", releaseExitTick,
+                        "feetDropTick", unsupportedTick, "inputYaw", 180, "clientEquipment", clientGearAtJump,
+                        "serverEquipment", serverGearAtJump));
+            }
+            if (slipperFlight) {
+                report.put("slipperFlight", Map.of(
+                        "firstTapClientTick", firstFlightTapClientTick,
+                        "clientEquipmentAtFirstTap", clientGearAtJump,
+                        "serverEquipmentAfterFirstTap", serverGearAtJump,
+                        "clientEquipmentWhileFlying", activeFlightGearClient,
+                        "serverEquipmentWhileFlying", activeFlightGearServer));
+            }
             report.put("failure", failure == null ? "" : failure);
             report.put("controls", upControl);
             report.put("descentControls", downControl);
@@ -801,6 +1162,7 @@ public final class SableElevatorLiveSequence {
                 report.put("clientPassengerTicks", clientRide.stream().filter(ClientSample::passenger).count());
                 report.put("clientOutsideCabinFootprintTicks", clientRide.stream().filter(s -> !s.overCabinFloor).count());
             }
+            if (SableElevatorPhaseProbe.enabled()) report.put("phases", SableElevatorPhaseProbe.snapshot());
             report.put("server", serverRows);
             report.put("client", clientRows);
             report.put("antiClipping", corrections);
@@ -834,7 +1196,7 @@ public final class SableElevatorLiveSequence {
     private record ServerSample(String stage, int tick, long nanoTime, int cabinId, float rpm, double cabinPlotY,
                                 Numbers carrier, Numbers floor, Numbers error, boolean grounded,
                                 boolean trackingPlatform, int target, int direction, boolean ragdolled,
-                                boolean passenger, boolean overCabinFloor) { }
+                                boolean passenger, boolean overCabinFloor, double carrierYawDegrees) { }
 
     private record ClientSample(String stage, int tick, long nanoTime, int actionTick, Numbers position, Numbers error, Numbers cabinLocal,
                                 Numbers carrierStep, Numbers nativeInheritedStep, Numbers storedNativeVelocity, boolean previouslyTrackingCarrier,

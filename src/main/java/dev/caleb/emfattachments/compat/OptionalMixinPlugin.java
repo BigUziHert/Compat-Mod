@@ -35,6 +35,9 @@ public final class OptionalMixinPlugin implements IMixinConfigPlugin {
         if (Boolean.getBoolean("emfattachments.disable")) {
             return false;
         }
+        if (mixinClassName.endsWith(".InvisiblePlayerLayerPoseMixin")) {
+            return discoveredVersionIs("entity_model_features", "3.3.12");
+        }
         if (mixinClassName.endsWith(".AetherCapeLookupMixin")) {
             return modPresent("aether") && modPresent("accessories")
                     && !Boolean.getBoolean("emfattachments.aetherParallelCapeLookup");
@@ -73,6 +76,8 @@ public final class OptionalMixinPlugin implements IMixinConfigPlugin {
             return modPresent("sable") && modPresent("entityculling");
         }
         if (mixinClassName.endsWith(".SableElevatorCollisionMixin")
+                || mixinClassName.endsWith(".SableElevatorPositionMixin")
+                || mixinClassName.endsWith(".SableElevatorPostTickMixin")
                 || mixinClassName.endsWith(".SableElevatorTravelMixin")) {
             return discoveredVersionIs("sable", "2.0.6") && discoveredVersionIs("create", "6.0.10");
         }

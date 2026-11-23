@@ -13,6 +13,13 @@ public final class TestOptionalMixinPlugin implements IMixinConfigPlugin {
         return FMLLoader.getLoadingModList().getModFileById(id) != null;
     }
     @Override public boolean shouldApplyMixin(String target, String mixin) {
+        if (mixin.contains(".ScarfLive")) return Boolean.getBoolean("emfattachments.scarfLive") &&
+                loaded("entity_model_features") && loaded("accessories") && loaded("artifacts");
+        if (mixin.contains(".SableElevatorPhase")) {
+            return Boolean.getBoolean("emfattachments.sableElevatorPhases")
+                    && Boolean.getBoolean("emfattachments.sableElevatorLive") && loaded("sable") && loaded("create")
+                    && (!mixin.endsWith(".SableElevatorPhaseContactMixin") || loaded("emfattachments"));
+        }
         if (mixin.endsWith(".SableElevatorRiderCarryProbeMixin")) {
             return Boolean.getBoolean("emfattachments.sableElevatorCarryProbe") && loaded("emfattachments");
         }

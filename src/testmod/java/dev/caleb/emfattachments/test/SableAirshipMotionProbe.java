@@ -70,17 +70,34 @@ final class SableAirshipMotionProbe {
                 || client.getSingleplayerServer().isPublished() || client.getUser().getType() != User.Type.LEGACY
                 || !OFFLINE_PLAYER.equals(client.player.getUUID()) || !OFFLINE_PLAYER.equals(client.getUser().getProfileId())
                 || !client.gameDirectory.toPath().toAbsolutePath().normalize().endsWith(Path.of(".local", "client"))
-                || client.getOverlay() != null || client.screen != null) return;
+                || client.getOverlay() != null) return;
         Path trigger = client.gameDirectory.toPath().resolve("emfattachments-sable-airship.txt");
         if (!Files.isRegularFile(trigger)) return;
+        if (client.screen instanceof net.minecraft.client.gui.screens.DeathScreen && client.player.isDeadOrDying()) {
+            LogUtils.getLogger().info("Respawning disposable fixture player before new deck scenario");
+            client.player.respawn();
+            client.setScreen(null);
+            return;
+        }
+        if (client.screen != null) return;
         try {
             List<String> args = List.of(Files.readString(trigger).strip().split("\\s+"));
             Files.delete(trigger);
-            if (args.size() != 2 || !List.of("rear", "left").contains(args.get(0))
+            boolean survival = args.size() >= 4 && args.getLast().equals("survival");
+            List<String> actions = args.size() >= 2 ? args.subList(2, args.size() - (survival ? 1 : 0)) : List.of();
+            boolean landingOnly = !actions.isEmpty() && List.of("slippers-jump", "reference-jump").contains(actions.getFirst());
+            boolean flightOnly = actions.equals(List.of("slippers-flight")) || actions.equals(List.of("reference-flight"));
+            boolean sprintJump = actions.equals(List.of("sprint-jump"))
+                    || landingOnly && actions.size() == 2 && actions.getLast().equals("sprint-jump");
+            boolean walkOff = actions.equals(List.of("walk-off"));
+            if (args.size() < 2 || survival && !landingOnly || !actions.isEmpty() && !sprintJump && !walkOff && !flightOnly && !(landingOnly && actions.size() == 1)
+                    || !List.of("rear", "left", "first").contains(args.get(0))
                     || !List.of("x", "z").contains(args.get(1))) {
-                throw new IllegalArgumentException("Expected rear|left x|z");
+                throw new IllegalArgumentException("Expected rear|left|first x|z [sprint-jump|walk-off|"
+                        + "slippers-jump [sprint-jump] [survival]|reference-jump [sprint-jump] [survival]|slippers-flight|reference-flight]");
             }
-            active = new Session(client, args.get(0), args.get(1));
+            active = new Session(client, args.get(0), args.get(1), walkOff, sprintJump,
+                    landingOnly, flightOnly, actions.contains("slippers-jump") || actions.contains("slippers-flight"), survival);
         } catch (Exception failure) {
             if (active != null) active.fail(failure);
             else LogUtils.getLogger().error("Could not start disposable airship motion fixture", failure);
@@ -143,12 +160,33 @@ final class SableAirshipMotionProbe {
         double holdHeight;
         int warmupTicks, rampTicks, setupTicks;
         boolean selectedCamera;
+        final boolean sprintJump, walkOff, landingOnly, flightOnly, checkEquipment, slippers;
+        final int deckRadius;
+        boolean leftDeck;
+        BunnySlippersEquipment.Saved savedEquipment;
+        final GameType requestedMode;
+        int originalFood;
+        float originalSaturation, originalExhaustion;
+        volatile boolean serverEquipmentReady;
+        final JumpWindow clientJump = new JumpWindow(), serverJump = new JumpWindow();
+        int clientFlyingTicks;
+        volatile int serverFlyingTicks;
 
-        Session(Minecraft client, String view, String axis) {
+        Session(Minecraft client, String view, String axis, boolean walkOff,
+                boolean sprintJump, boolean landingOnly, boolean flightOnly, boolean slippers, boolean survival) {
             this.client = client;
             this.server = client.getSingleplayerServer();
             this.view = view;
             this.axis = axis;
+            this.walkOff = walkOff;
+            this.sprintJump = sprintJump;
+            this.landingOnly = landingOnly;
+            this.flightOnly = flightOnly;
+            checkEquipment = landingOnly || flightOnly;
+            this.slippers = slippers;
+            requestedMode = survival ? GameType.SURVIVAL : GameType.CREATIVE;
+            // Give the extended sprint jump room to land. Paired barefoot controls use the same footprint.
+            deckRadius = checkEquipment ? 15 : 9;
             camera = new SableElevatorCameraProbe(view);
             forwardWasDown = client.options.keyUp.isDown();
             jumpWasDown = client.options.keyJump.isDown();
@@ -163,12 +201,22 @@ final class SableAirshipMotionProbe {
                     if (deck != null && !deck.isRemoved()) SubLevelContainer.getContainer(deck.getLevel())
                             .removeSubLevel(deck, SubLevelRemovalReason.REMOVED);
                 } finally {
-                    if (snapshot != null) snapshot.restore(player);
-                    restored = true;
+                    try {
+                        if (savedEquipment != null) savedEquipment.restore(player);
+                    } finally {
+                        if (snapshot != null && requestedMode == GameType.SURVIVAL) {
+                            player.getFoodData().setFoodLevel(originalFood);
+                            player.getFoodData().setSaturation(originalSaturation);
+                            player.getFoodData().setExhaustion(originalExhaustion);
+                        }
+                        if (snapshot != null) snapshot.restore(player);
+                        restored = true;
+                    }
                 }
                 return;
             }
             if (deck == null) build(player);
+            if (checkEquipment && !serverEquipmentReady) serverEquipmentReady = BunnySlippersEquipment.ready(player, slippers);
             if (deck.isRemoved()) throw new IllegalStateException("The fixture deck unloaded");
             if (visible && player.isNoGravity()) player.setNoGravity(false);
             double speed = standing ? SPEED * Math.min(++rampTicks / 12.0, 1.0) : 0;
@@ -177,16 +225,30 @@ final class SableAirshipMotionProbe {
                     0.25 + 3 * (holdHeight - deck.logicalPose().transformPosition(deckFloor).y),
                     axis.equals("z") ? speed : 0);
             pipeline.addLinearAndAngularVelocity(deck, correction, pipeline.getAngularVelocity(deck, new Vector3d()).negate());
-            if (inputTick >= 0) {
-                var row = sample(player, deck, inputTick);
+            int sampledTick = inputTick;
+            if (sampledTick >= 0) {
+                var row = sample(player, deck, sampledTick);
                 row.put("ragdolled", ExpandedRagdollRecovery.active(player));
                 serverRows.add(row);
+                if (landingOnly) observeJump(player, deck, sampledTick, serverJump, row);
+                if (flightOnly && sampledTick >= JUMP_AT - 2) {
+                    observeEquipment(player, sampledTick, row);
+                    if (player.getAbilities().flying) serverFlyingTicks++;
+                }
             }
         }
 
         private void build(ServerPlayer player) {
+            // A preceding fixture's return teleport can trigger an archive-configured ragdoll after teardown.
+            ExpandedRagdollRecovery.release(player);
             if (player.isPassenger()) throw new IllegalStateException("The fixture requires an unmounted player");
             snapshot = new Snapshot(player);
+            if (requestedMode == GameType.SURVIVAL) {
+                originalFood = player.getFoodData().getFoodLevel();
+                originalSaturation = player.getFoodData().getSaturationLevel();
+                originalExhaustion = player.getFoodData().getExhaustionLevel();
+            }
+            if (checkEquipment) savedEquipment = slippers ? BunnySlippersEquipment.equip(player) : BunnySlippersEquipment.bare(player);
             var level = player.serverLevel();
             var container = SubLevelContainer.getContainer(level);
             int x = player.getBlockX() + 24;
@@ -202,8 +264,8 @@ final class SableAirshipMotionProbe {
             for (int dx = -1; dx <= 1; dx++) {
                 for (int dz = -1; dz <= 1; dz++) plot.newEmptyChunk(new ChunkPos(center.x + dx, center.z + dz));
             }
-            for (int dx = -9; dx <= 9; dx++) {
-                for (int dz = -9; dz <= 9; dz++) {
+            for (int dx = -deckRadius; dx <= deckRadius; dx++) {
+                for (int dz = -deckRadius; dz <= deckRadius; dz++) {
                     plot.getEmbeddedLevelAccessor().setBlock(new BlockPos(dx, 0, dz),
                             (dx == 0 || dz == 0 ? Blocks.QUARTZ_BLOCK : Blocks.OAK_PLANKS).defaultBlockState(), 3);
                 }
@@ -216,7 +278,7 @@ final class SableAirshipMotionProbe {
             deckFloor = Vec3.atBottomCenterOf(origin).add(0, 1, 0);
             Vec3 spawn = deck.logicalPose().transformPosition(deckFloor.add(0, 0.25, 0));
             holdHeight = deck.logicalPose().transformPosition(deckFloor).y;
-            player.setGameMode(GameType.CREATIVE);
+            player.setGameMode(requestedMode);
             player.getAbilities().flying = false;
             player.onUpdateAbilities();
             player.setNoGravity(true);
@@ -239,6 +301,7 @@ final class SableAirshipMotionProbe {
                     standing = true;
                 }
                 if (!standing || ++warmupTicks < 32) return;
+                if (checkEquipment && (!serverEquipmentReady || !BunnySlippersEquipment.ready(client.player, slippers))) return;
                 if (!selectedCamera) {
                     camera.begin(client);
                     selectedCamera = true;
@@ -255,7 +318,49 @@ final class SableAirshipMotionProbe {
             row.put("forwardInput", client.player.input.up);
             row.put("jumpInput", client.player.input.jumping);
             clientRows.add(row);
-            boolean running = tick >= RUN_AT && tick < RUN_END;
+            if (flightOnly) {
+                if (tick >= JUMP_AT - 2) observeEquipment(client.player, tick, row);
+                if (tick == JUMP_AT && (!client.player.onGround() || client.player.getAbilities().flying
+                        || Sable.HELPER.getTrackingSubLevel(client.player) != current)) {
+                    throw new IllegalStateException("Native flight first tap requires standing support");
+                }
+                if (client.player.getAbilities().flying) clientFlyingTicks++;
+                client.options.keyUp.setDown(false);
+                client.options.keySprint.setDown(false);
+                client.options.keyJump.setDown(tick == JUMP_AT || tick >= JUMP_AT + 5 && tick < JUMP_AT + 20);
+                if (tick == JUMP_AT + 48) {
+                    if (clientFlyingTicks < 30 || serverFlyingTicks < 30) throw new IllegalStateException("Double tap did not produce sustained native flight");
+                    stopping = true;
+                }
+                return;
+            }
+            if (landingOnly) {
+                observeJump(client.player, current, tick, clientJump, row);
+                boolean runToJump = sprintJump && tick >= JUMP_AT - 6 && tick <= JUMP_AT + 1;
+                client.options.keyUp.setDown(runToJump);
+                client.options.keySprint.setDown(runToJump);
+                client.options.keyJump.setDown(tick == JUMP_AT);
+                if (tick == JUMP_AT && (!client.player.onGround() || Sable.HELPER.getTrackingSubLevel(client.player) != current
+                        || !BunnySlippersEquipment.ready(client.player, slippers)
+                        || client.player.isSprinting() != sprintJump || client.player.input.up != sprintJump)) {
+                    throw new IllegalStateException("Native jump setup differed from the requested support, loadout or sprint input");
+                }
+                if (clientJump.landed >= 0 && serverJump.landed >= 0
+                        && tick >= Math.max(clientJump.landed, serverJump.landed) + 6) stopping = true;
+                if (tick >= JUMP_AT + 100) throw new IllegalStateException("Native jump did not land on the test deck on both sides");
+                return;
+            }
+            if (walkOff) {
+                if (tick > WALK_AT && Sable.HELPER.getTrackingSubLevel(client.player) != current
+                        && !client.player.onGround()) leftDeck = true;
+                client.options.keyUp.setDown(tick >= WALK_AT && !leftDeck);
+                client.options.keySprint.setDown(false);
+                client.options.keyJump.setDown(false);
+                if (tick >= END_AT) stopping = true;
+                return;
+            }
+            boolean running = tick >= RUN_AT && tick < RUN_END
+                    || sprintJump && tick >= JUMP_AT - 6 && tick <= JUMP_AT + 1;
             if (tick == RUN_AT) aim(yaw() + 180);
             if (tick == RUN_END) camera.resetLook();
             camera.stopOrbitRequest();
@@ -300,7 +405,12 @@ final class SableAirshipMotionProbe {
             frames.add(row);
         }
 
-        private static String phase(int tick) {
+        private String phase(int tick) {
+            if (flightOnly) return tick <= JUMP_AT ? "FAST_STANDING" : "FAST_FLIGHT_DOUBLE_TAP";
+            if (landingOnly) {
+                if (tick <= JUMP_AT - 6) return "FAST_STANDING";
+                return tick <= JUMP_AT ? (sprintJump ? "FAST_SPRINT_APPROACH" : "FAST_STANDING") : "FAST_JUMP_AND_LANDING";
+            }
             if (tick <= WALK_AT) return "FAST_STANDING";
             if (tick <= RUN_AT) return "FAST_WALKING";
             if (tick <= JUMP_AT) return "FAST_RUNNING_LOOK";
@@ -308,7 +418,7 @@ final class SableAirshipMotionProbe {
             return "FAST_CREATIVE_FLIGHT";
         }
 
-        private static Map<String, Object> sample(Player player, SubLevel deck, int tick) {
+        private Map<String, Object> sample(Player player, SubLevel deck, int tick) {
             Map<String, Object> row = new LinkedHashMap<>();
             var pose = deck.logicalPose();
             var collision = ((EntityMovementExtension) player).sable$getCollisionInfo();
@@ -332,6 +442,31 @@ final class SableAirshipMotionProbe {
             return row;
         }
 
+        private static final class JumpWindow {
+            int airborne = -1;
+            volatile int landed = -1;
+        }
+
+        private void observeJump(Player player, SubLevel deck, int tick, JumpWindow window, Map<String, Object> row) {
+            if (tick < JUMP_AT - 2) return;
+            observeEquipment(player, tick, row);
+            if (player.getAbilities().flying) throw new IllegalStateException("Creative flight during the single-tap jump");
+            double height = deck.logicalPose().transformPositionInverse(player.position()).y - deckFloor.y;
+            if (tick >= JUMP_AT && window.airborne < 0 && !player.onGround() && height > .15) window.airborne = tick;
+            if (window.airborne >= 0 && window.landed < 0 && player.onGround() && Math.abs(height) < .15
+                    && Sable.HELPER.getTrackingSubLevel(player) == deck) window.landed = tick;
+        }
+
+        private void observeEquipment(Player player, int tick, Map<String, Object> row) {
+            row.put("slippersEquipment", BunnySlippersEquipment.sample(player));
+            GameType mode = player instanceof ServerPlayer sp ? sp.gameMode.getGameModeForPlayer() : client.gameMode.getPlayerMode();
+            row.put("gameMode", mode.name());
+            if (mode != requestedMode || !BunnySlippersEquipment.ready(player, slippers) || player.isPassenger() || Boolean.TRUE.equals(row.get("ragdolled"))) {
+                throw new IllegalStateException("Game mode, loadout, passenger or ragdoll state invalidated the action at "
+                        + tick + " on " + (player.level().isClientSide() ? "client" : "server"));
+            }
+        }
+
         private static List<Double> vector(Vec3 value) { return List.of(value.x, value.y, value.z); }
 
         void fail(Exception error) {
@@ -348,9 +483,20 @@ final class SableAirshipMotionProbe {
                 client.options.keySprint.setDown(sprintWasDown);
                 Path file = client.gameDirectory.toPath().resolve("emfattachments-sable-airship-" + view + "-" + axis + ".json");
                 try (var out = Files.newBufferedWriter(file, StandardCharsets.UTF_8)) {
-                    new GsonBuilder().setPrettyPrinting().create().toJson(Map.of("view", view, "axis", axis,
+                    var report = new LinkedHashMap<String, Object>(Map.of("view", view, "axis", axis, "sprintJump", sprintJump, "walkOff", walkOff,
                             "targetBlocksPerMinute", SPEED * 60, "client", clientRows, "server", serverRows,
-                            "frames", frames, "failure", failure), out);
+                            "frames", frames, "failure", failure));
+                    if (checkEquipment) {
+                        report.put("jumpLoadout", slippers ? "artifacts:bunny_hoppers" : "bare-reference");
+                        report.put("deckWidth", 2 * deckRadius + 1);
+                        report.put("flightOnly", flightOnly);
+                        report.put("requestedGameMode", requestedMode.name());
+                    }
+                    if (landingOnly) {
+                        report.put("clientAirborneAndLanded", List.of(clientJump.airborne, clientJump.landed));
+                        report.put("serverAirborneAndLanded", List.of(serverJump.airborne, serverJump.landed));
+                    }
+                    new GsonBuilder().setPrettyPrinting().create().toJson(report, out);
                 }
                 LogUtils.getLogger().info("Finished disposable Sable airship motion recording {} {}", view, axis);
             } finally {

@@ -76,10 +76,14 @@ final class PoweredElevatorFixture implements AutoCloseable {
     }
 
     void build() {
+        build(false);
+    }
+
+    void build(boolean cabinWall) {
         if (platform == null) {
             // Create disassembles the cabin at its current floor, which may differ from its starting floor.
             for (int x = CABIN_MIN_X; x <= 1; x++) {
-                for (int y = BOTTOM_FLOOR; y <= TOP_FLOOR + 1; y++) {
+                for (int y = BOTTOM_FLOOR; y <= TOP_FLOOR + (cabinWall ? 3 : 1); y++) {
                     for (int z = -CABIN_RADIUS_Z; z <= CABIN_RADIUS_Z; z++) rememberAir(origin.offset(x, y, z));
                 }
             }
@@ -106,6 +110,11 @@ final class PoweredElevatorFixture implements AutoCloseable {
             }
         }
         var contact = createBlock("redstone_contact");
+        if (cabinWall) {
+            for (int x = CABIN_MIN_X; x <= 0; x++) {
+                for (int h = 1; h <= 3; h++) place(x, BOTTOM_FLOOR + h, -3, Blocks.STONE.defaultBlockState());
+            }
+        }
         place(1, BOTTOM_FLOOR, 0, contact.setValue(BlockStateProperties.FACING, Direction.EAST));
         for (int y : new int[]{BOTTOM_FLOOR, 10, TOP_FLOOR}) {
             place(2, y, 0, contact.setValue(BlockStateProperties.FACING, Direction.WEST));
@@ -117,7 +126,7 @@ final class PoweredElevatorFixture implements AutoCloseable {
         place(1, PULLEY_Y, 0, createBlock("creative_motor").setValue(BlockStateProperties.FACING, Direction.WEST));
         glue = new SuperGlueEntity(level, SuperGlueEntity.span(
                 origin.offset(CABIN_MIN_X, BOTTOM_FLOOR, -CABIN_RADIUS_Z),
-                origin.offset(1, BOTTOM_FLOOR + 1, CABIN_RADIUS_Z)));
+                origin.offset(1, BOTTOM_FLOOR + (cabinWall ? 3 : 1), CABIN_RADIUS_Z)));
         if (!level.addFreshEntity(glue)) throw new IllegalStateException("Cabin glue could not be spawned");
         if (!(level.getBlockEntity(origin.offset(0, PULLEY_Y, 0)) instanceof ElevatorPulleyBlockEntity nativePulley)
                 || !(level.getBlockEntity(origin.offset(1, PULLEY_Y, 0)) instanceof CreativeMotorBlockEntity motor)) {
@@ -178,13 +187,19 @@ final class PoweredElevatorFixture implements AutoCloseable {
     }
 
     void drive(double x, double z) {
+        drive(x, z, 0, 0);
+    }
+
+    void drive(double x, double z, double risePerTick, double yawRate) {
         if (platform == null) return;
         if (platform.isRemoved()) throw new IllegalStateException("Moving elevator platform unloaded");
         pipeline.getLinearVelocity(platform, linear).negate();
         // Apply a velocity change to the real physics body. The feedback only holds altitude.
+        holdY += risePerTick;
         double y = 0.25 + (holdY - platformReferenceY()) * 3;
         linear.add(x, y, z);
         pipeline.getAngularVelocity(platform, angular).negate();
+        angular.y += yawRate;
         pipeline.addLinearAndAngularVelocity(platform, linear, angular);
     }
 

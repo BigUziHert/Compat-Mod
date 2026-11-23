@@ -35,6 +35,7 @@ class OptionalEmfCompatibilityTest {
     // These support an EMF integration without directly linking its API.
     private static final Set<String> EMF_SUPPORT_MIXINS = Set.of("SableFreshAnimationPlayerMixin",
             "FirstPersonNeaBowPoseMixin", "FirstPersonNeaCrossbowPoseMixin");
+    private final MixinDiscoveryFixture discovery = new MixinDiscoveryFixture();
     private final Map<String, Set<String>> references = new HashMap<>();
 
     @Test void metadataAllowsBothModsToBeAbsent() throws IOException {
@@ -115,8 +116,10 @@ class OptionalEmfCompatibilityTest {
                     String targetName = target instanceof Type type ? type.getClassName() : (String) target;
                     // The Fresh hooks are available with either height source; the runtime
                     // helper selects legacy deck motion or upstream precision protection.
-                    return new OptionalMixinPlugin(installed, (mod, minimum) -> !mod.equals("emf_compat_core")
-                            || new DefaultArtifactVersion("2.3.2").compareTo(new DefaultArtifactVersion(minimum)) >= 0)
+                    var versions = installed.test(EMF) ? Map.of(EMF, new DefaultArtifactVersion("3.3.12"))
+                            : Map.<String, DefaultArtifactVersion>of();
+                    return discovery.selector(installed, (mod, minimum) -> !mod.equals("emf_compat_core")
+                            || new DefaultArtifactVersion("2.3.2").compareTo(new DefaultArtifactVersion(minimum)) >= 0, versions)
                             .shouldApplyMixin(targetName, mixin.replace('/', '.'));
                 }
             }

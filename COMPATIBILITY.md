@@ -2,6 +2,20 @@
 
 The FPM x Compat replacement was introduced in 1.1.0 for this Minecraft 1.21.1 / NeoForge instance. EMF, ETF and FirstPerson are optional; installation preserves their current presence or absence. Independent corrections remain active without EMF/ETF, while EMF animation fixes require EMF 3.3.12 or newer and its own compatible ETF dependency. EMF bridge mods may still require EMF and must be disabled or removed separately when removing it. The replacement neither bundles nor calls FPM x Compat, and the installer removes that companion from the instance's mods directory.
 
+## Fresh Player animation on invisible players in 1.2.20-dev
+
+With EMF 3.3.12, Minecraft skips drawing a fully invisible player's body. That also skips the point where EMF normally updates the Fresh Player pose. The client now evaluates the pose before rendering visible equipment. This covers the Artifacts Scarf of Invisibility and vanilla invisibility. The equipped armor, backpack and other accessories can follow the animated player while the skin stays hidden. Each multiplayer viewer uses their own client's renderer. [Reproduction and frame measurements](TESTING.md#version-1220-dev-verification-record)
+
+## Moving elevator takeoff, landing and walk-off in 1.2.20-dev
+
+On Create 6.0.10 and Sable 2.0.6, the client sends its normal player-position update after Create finishes moving a nearby Sable-mounted elevator rider. This keeps remote movement in step with the local rider when jumping onto or off the cabin. The change uses the existing Minecraft packet and Sable's airborne drag. It applies to bare feet and Artifacts Bunny Hoppers alike.
+
+On takeoff or walk-off, the client uses the rider's position in two server-timed Sable poses to estimate one tick of carrier velocity when network interpolation changes pace. A final walk-off step goes through Create's collision resolver, and the rider inherits the horizontal displacement that collision allowed. On a missed contact at a cabin edge, the client checks solid top faces under the rider's foot area. A deliberate flight or fully cleared edge releases the rider. [Gameplay and packet verification](TESTING.md#version-1220-dev-verification-record)
+
+For a jump back onto the same cabin, the client checks the actual crossing of the floor plane and the rider's feet at the end of that tick. A small remaining foot overlap can make a landing. Walking off or entering flight does not start this landing check.
+
+At a cabin adjoining a native Sable deck, Sable can retain tracking for several ticks after takeoff. When the same cabin receives that jumper, the client accounts for the part of the returning rider's motion that Sable has already supplied. This prevents a second full carrier step at touchdown. [Exact deck-to-cabin landing replay](TESTING.md#version-1220-dev-verification-record)
+
 ## Boarding and leaving a moving Sable elevator in 1.2.19
 
 Create's cabin and Sable's landing could both apply the same horizontal motion as a rider crossed the seam. The client now subtracts the part Sable already applied and consumes matching Sable momentum after native floor contact transfers to the cabin. During a deliberate jump or creative takeoff, the rider gets the carrier's horizontal velocity through Sable's native airborne movement. The client removes the overlapping motion again if the rider lands on the same cabin.

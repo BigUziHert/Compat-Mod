@@ -7,6 +7,7 @@ import com.llamalad7.mixinextras.sugar.ref.LocalRef;
 import com.simibubi.create.content.contraptions.AbstractContraptionEntity;
 import com.simibubi.create.content.contraptions.ContraptionCollider;
 import com.simibubi.create.content.contraptions.elevator.ElevatorContraption;
+import dev.caleb.emfattachments.client.SableElevatorPositionSync;
 import dev.caleb.emfattachments.client.SableElevatorRiderCarry;
 import dev.ryanhcode.sable.Sable;
 import java.lang.ref.WeakReference;
@@ -35,7 +36,10 @@ public abstract class SableElevatorCollisionMixin {
             @Share("elevatorCameraPosition") LocalRef<Vec3> before) {
         if (!cabin.level().isClientSide() || !(cabin.getContraption() instanceof ElevatorContraption)) return;
         var rider = Minecraft.getInstance().player;
-        if (rider != null) before.set(rider.position());
+        if (rider != null) {
+            SableElevatorPositionSync.observeCabin(rider, cabin);
+            before.set(rider.position());
+        }
     }
 
     @Inject(method = "collideEntities", at = @At(value = "INVOKE",
@@ -61,8 +65,7 @@ public abstract class SableElevatorCollisionMixin {
         Vec3 movement = SableElevatorRiderCarry.missingCarry(rider, cabin);
         if (movement != Vec3.ZERO) {
             Vec3 allowed = collide(movement, rider);
-            if (allowed.y != 0 || allowed.distanceToSqr(movement) > 1e-8) SableElevatorRiderCarry.clear();
-            if (allowed.y == 0) rider.setPos(rider.position().add(allowed));
+            SableElevatorRiderCarry.finishCarry(rider, cabin, movement, allowed);
         }
         SableElevatorRiderCarry.recordCameraMovement(rider, cabin, before.get());
     }

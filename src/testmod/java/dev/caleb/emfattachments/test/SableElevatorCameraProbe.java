@@ -47,6 +47,7 @@ final class SableElevatorCameraProbe {
     private double orbitTime;
     private double frameYawInput;
     private double framePitchInput;
+    private boolean steadyOrbit;
 
     SableElevatorCameraProbe() {
         this(System.getProperty("emfattachments.elevatorCamera", "first"));
@@ -59,6 +60,10 @@ final class SableElevatorCameraProbe {
     void lookAround(int tick) {
         orbitRequested = true;
         lookTick = tick;
+    }
+
+    void useSteadyOrbit() {
+        steadyOrbit = true;
     }
 
     void stopOrbitRequest() {
@@ -90,8 +95,8 @@ final class SableElevatorCameraProbe {
             }
             double sensitivity = client.options.sensitivity().get() * 0.6 + 0.2;
             double degreesPerPixel = sensitivity * sensitivity * sensitivity * 8 * 0.15;
-            frameYawInput = 100 * (sweep(orbitTime, 52) - sweep(lastTime, 52));
-            framePitchInput = 28 * (sweep(orbitTime, 34) - sweep(lastTime, 34));
+            frameYawInput = steadyOrbit ? 76 * elapsedSeconds : 100 * (sweep(orbitTime, 52) - sweep(lastTime, 52));
+            framePitchInput = steadyOrbit ? 4 * elapsedSeconds : 28 * (sweep(orbitTime, 34) - sweep(lastTime, 34));
             MouseHandler mouse = client.mouseHandler;
             double oldDX = accumulatedDX.getDouble(mouse);
             double oldDY = accumulatedDY.getDouble(mouse);

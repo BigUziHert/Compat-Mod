@@ -53,6 +53,7 @@ public final class AttachmentTestMod {
         if (elevatorLive || airshipMotion) {
             if (elevatorLive) SableElevatorLiveSequence.register();
             if (airshipMotion) SableAirshipMotionProbe.register();
+            if (Boolean.getBoolean("emfattachments.sableElevatorProbe")) SableElevatorCollisionProbe.register();
             NeoForge.EVENT_BUS.addListener(AttachmentTestMod::tick);
             return;
         }
@@ -96,6 +97,7 @@ public final class AttachmentTestMod {
         ExpandedMovementSequence.register();
         ExpandedArmorAbilitySequence.register();
         ExpandedLiveWearableSequence.register();
+        if (Boolean.getBoolean("emfattachments.scarfLive")) ScarfAnimationProbe.register();
         ShieldDrawOrderProbe.register();
         ExpandedShieldDefenseSequence.register();
         ExpandedRagdollSequence.register();
