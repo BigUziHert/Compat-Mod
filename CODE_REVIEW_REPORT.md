@@ -55,7 +55,7 @@ The real problems are:
 | P-08 | Low | Reduced-tick version gate admits pre-release builds (`2.0.7-beta`, `1.12.3-beta`) | Confirmed by running the comparator |
 | P-09 | Low | Left-handed player: an Artifacts or Cataclysm glove equipped *after* the ragdoll formed is not drawn | Narrowed from a broader claim that was refuted; key link confirmed in bytecode |
 
-Section 4 lists hardening notes that are not bugs today. Section 5 lists 13 low-severity defects in the test harness and dev scripts, several of which can produce a false "verified" record. Section 6 lists what was checked and found sound, and what was refuted.
+Section 4 lists hardening notes that are not bugs today. Section 5 lists 24 defects in the test harness and dev scripts, several of which can produce a false "verified" record. Section 6 lists what was checked and found sound, and what was refuted.
 
 ---
 
@@ -348,7 +348,7 @@ These were raised as findings and then downgraded after checking real versions.
 
 ## 5. Test harness, dev scripts and documentation
 
-All low severity. They matter because several can produce a "verified" record that the evidence does not support.
+All are low severity except T-06, which can hide a real rendering regression from the release record. They matter because several can produce a "verified" record that the evidence does not support. Every row was confirmed either by me reading the code or by an independent verifier.
 
 ### 5.1 Test harness (`src/testmod`)
 
@@ -359,6 +359,13 @@ All low severity. They matter because several can produce a "verified" record th
 | T-03 | `test/SableElevatorLiveSequence.java:586` | Camera evidence stops recording at 3,600 rows with no flag. The per-leg camera verdict (lines 1100–1101) is then computed from a prefix and can pass on a partial descent | Record `cameraRowsTruncated` and fail the camera verdict when it is set, or cap per phase instead of globally |
 | T-04 | `test/LiveCombatSequence.java:106` | Final status is `violations.isEmpty() ? "CAPTURED" : "FAIL"` with no check that any owned combat frame was observed. If ownership is never claimed the run ends CAPTURED with zero violations. The sibling `OverlapCombatSequence` has the guard (`hookFrames > 0`) | Require `ownedFrames > 0` overall and per scenario |
 | T-05 | `test/AttachmentTestMod.java:393-409` | In the renderer sweep, a screenshot or report failure sets `complete = true`; closing the screen then writes `"finished": true` over truncated results, and `scripts/summarize_tests.py` copies that flag through | Track `aborted` separately and write `finished = finished && !aborted` |
+| T-06 | `test/ExpandedSequentialAbilitySequence.java:1353` (also 275, 1278–1280, 1358–1371), read by `scripts/reconcile_final_native_outcomes.py:86` | `complete()` writes the row's status and `rendererViolations` once, then most cases continue into an EXPIRE or STORM_DRAIN phase in which `frame()` keeps counting violations (up to about 1,800 ticks for Tempest). Nothing writes the later count back and `next()` resets it, so the row keeps PASS with 0 violations and the release reconciler reads that 0. A regression that only shows while the weapon is held after its ability fires is not recorded | In `next()`, before the reset, compare the count with its value at `complete()`; if it grew, update `rendererViolations` and set the row to RENDER_FAILURE |
+| T-07 | `test/ExpandedEquipmentSequence.java:325-338` | Same pattern as T-05 in a second sweep screen: a screenshot or report failure sets `complete = true` and closing the screen writes `finished: true` | Same fix as T-05 |
+| T-08 | `test/NeaProjectileLifecycleSequence.java:156` | `bodyExpected = !firstPerson || CombatRenderCounters.bodyPasses > 0`, and that counter only increments when production's `isLocalBody` is true, which is the same predicate the bow fix uses. If `isLocalBody` stops matching, the fix turns off and the first-person bow assertions are skipped together | Derive the expectation from harness state (first person and FirstPerson enabled) and require exactly one body pass |
+| T-09 | `test/OverlapCombatSequence.java:193-215` | `hookFrames` is session-wide and never reset per case. A case that never enters owned combat rendering adds no failures, and the run still ends CAPTURED if any other case had one hook frame | Count owned and hook frames per case and fail a case that has none |
+| T-10 | `test/LiveFirstPersonSequence.java:103-105, 206`, `scripts/summarize_tests.py:128-138` | The embedded `FirstPersonProbe` result is stored but never read. The sequence ends CAPTURED even when the probe status is FAIL, and the summary drops the probe status | Downgrade to FAIL when the probe did not pass; carry the probe status into the summary |
+| T-11 | `test/GlErrorTraceProbe.java:136-183` | Reports CAPTURED / NO_MATCHING_ERROR_OBSERVED even when GL debug output was never enabled (`glDebugVerbosity` 0 or no debug extension), in which case it cannot observe any error | Record whether the debug callback is installed and report NOT_OBSERVABLE otherwise |
+| T-12 | `test/RevivalFaceSequence.java:177-178, 251` | The fixture clears a 17×17×7 volume around the player's current position and restores block states only, so containers drop their contents and block entities lose their data. It is guarded by the disposable-client check, so it only matters when the trigger is run by hand in a world worth keeping | Build the arena at a fixed remote coordinate and refuse to overwrite positions that hold block entities |
 
 ### 5.2 Dev scripts (`scripts/`)
 
@@ -374,6 +381,8 @@ All low severity. They matter because several can produce a "verified" record th
 | S-08 | `record_build.py:14-36` | Binds whatever JUnit XML is in `build/test-results` to the freshly hashed jar and sources. After `gradlew jar` (tests not run) it records old passing results next to new code | Require the XML to be newer than the compiled classes |
 | S-09 | `run_artifice_tests.py:108-116` | `launch` re-copies the production and harness jars from `build/libs` without comparing them to the hashes recorded by `prepare`, so `inputs.json` can name a different artifact from the one that ran | Compare hashes and refuse on mismatch |
 | S-10 | `launch_crowd_pass.ps1:3, 17-30` | The world is reset relative to `$PSScriptRoot`, but the embedded Python resolves the runtime from the current directory. Started from elsewhere, the world is archived and reset, then the launch fails, and a retry with the same attempt number is refused | Pass the repo path to Python explicitly; dry-run the import before moving the world |
+| S-11 | `audit_reported_fixes.py:38-132`, `reconcile_final_native_outcomes.py:76-234`, `export_without_fpm_final_review.py:24-97`, `export_focused_relic_ionbound_review.py` | Same assert-only gating as S-03 and S-04, followed by a constant PASS / RECONCILED / REVIEWED status | Same fix |
+| S-12 | `summarize_expanded_tests.py:37-51` | Live-wearable coverage counts a case as covered if any matching run ever passed it. A later FAIL for the same case leaves `allEnumeratedNativeUseCasesObserved` true, and the flag is also true for an empty catalog | Accept only runs with an accepted terminal status and clean restore flags, let later runs override earlier ones, and require a non-empty catalog |
 
 ### 5.3 Documentation
 
@@ -407,7 +416,7 @@ All low severity. They matter because several can produce a "verified" record th
 - **No in-game execution.** Every scenario above still needs a live reproduction. The elevator findings in particular rest on how Sable tracks a rider standing on a Create contraption, which was not observed at runtime.
 - **Reference versions.** Mixin targets were validated against the versions the repository documents (Sable 2.0.6, Create 6.0.10, Entity Culling 1.12.0–1.12.2, FirstPerson 2.7.3, EMF 3.3.12, ETF 7.2.6, EMF Compat Core 2.4.0, Accessories 1.1.0-beta.54, Curios 9.5.1, and so on), plus the versions listed in P-01. Where the repository documents no version, the newest 1.21.1 NeoForge release was used.
 - **Not available.** "RagRevival 1.4.0" (mentioned in TESTING.md) was not found on Modrinth. Supplementaries (targeted by one test mixin) had no reference jar. Fresh Animations' own resource-pack expressions were not available. Sodium/Embeddium fast paths were not checked.
-- **Test harness and scripts.** `src/testmod`, `src/perfmod` and `scripts/` were reviewed only for false passes, behaviour-changing probes, and damage to the developer's instance. Historical evidence-binder scripts pinned to old versions were treated as intentional.
+- **Test harness and scripts.** `src/testmod`, `src/perfmod` and `scripts/` were reviewed only for false passes, behaviour-changing probes, and damage to the developer's instance. Most files were read in full by one reviewer; a few large sequences were partly skimmed. Historical evidence-binder scripts pinned to old versions were treated as intentional.
 - **Build.** The build depends on a local mods folder (`-PinstanceMods`). It was reproduced in a scratch copy with the reference jars; the test-harness and perf source sets were not compiled.
 
 ---
