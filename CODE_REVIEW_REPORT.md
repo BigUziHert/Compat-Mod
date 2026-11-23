@@ -53,6 +53,7 @@ The real problems are:
 | P-06 | Low | Not Enough Animations smoothing can replace the first-person bow/crossbow correction under shader shadows when EMF is not animating the player | Partly confirmed (narrower than first reported) |
 | P-07 | Low (latent) | `missingCarry` does not discount an active airborne release | Code gap confirmed; no in-game trigger demonstrated |
 | P-08 | Low | Reduced-tick version gate admits pre-release builds (`2.0.7-beta`, `1.12.3-beta`) | Confirmed by running the comparator |
+| P-09 | Low | Left-handed player: an Artifacts or Cataclysm glove equipped *after* the ragdoll formed is not drawn | Narrowed from a broader claim that was refuted; key link confirmed in bytecode |
 
 Section 4 lists hardening notes that are not bugs today. Section 5 lists 13 low-severity defects in the test harness and dev scripts, several of which can produce a false "verified" record. Section 6 lists what was checked and found sound, and what was refuted.
 
@@ -311,6 +312,24 @@ Two cases:
 **How to test.** Extend `SableReducedTickLinkerTest` with a predicate reporting Sable `2.0.7-beta.1` and Entity Culling `1.12.3-beta`; `supported` must return false.
 
 **Verification status.** Confirmed by me by running `DefaultArtifactVersion` on those strings.
+
+---
+
+### P-09 (Low) — Left-handed player: a glove equipped after the ragdoll formed is not drawn
+
+**Where.** `mixin/RagdollArtifactArmMixin.java:18`, `mixin/RagdollCataclysmArmMixin.java`, `client/RagdollAccessoryArmScope.java:34-37`, with the routing in `mixin/RagdollHeadwearRoutingMixin.java`.
+
+**History of this finding.** It was first reported as "left-handed players lose their Artifacts gloves on a ragdoll in an Accessories-only setup". That is **refuted**: the arm mixins are only applied when Sable Player Ragdoll, Accessories, Curios and the Accessories Compat Layer are all installed (`OptionalMixinPlugin.java:130-134, 163-167`), and in that setup two independent traces show every glove is drawn exactly once on the correct arm for both handednesses. The Accessories draw that this mod cancels is replaced by the Curios-bridge draw of the same item in the other arm part.
+
+**What remains.** That replacement depends on Sable's Curios snapshot, which is taken only when the ragdoll is assembled. While a ragdoll is live, Sable re-syncs Accessories only: `RagdollEquipmentHelper.syncAccessoriesAndSend` calls `RagdollAccessoriesEquipmentHelper.applyFrom` and `sendPartUpdates` and nothing for Curios (I confirmed this in the 0.8.1 bytecode). So a glove that reaches the Accessories data after assembly has no Curios copy. Sable routes hand slot 0 to the right-arm part and slot 1 to the left-arm part by index parity; the Artifacts and Cataclysm renderers pick the arm from the owner's main hand; for a left-handed online owner these disagree, and this mod cancels the draw. The glove is drawn nowhere.
+
+**Failure scenario.** Sable Player Ragdoll 0.8.1, Accessories beta.54, Curios 9.5.1, Accessories Compat Layer 0.1.13, Artifacts 13.2.5 (or Cataclysm 3.33 claws/gloves). Main Hand set to Left, hand slots empty. Get ragdolled while online, then equip Feral Claws in hand slot 0 while the ragdoll is still active. The claw does not appear on the ragdoll. A right-handed owner sees it; a left-handed owner who wore it before ragdolling sees it. Without this mod the same glove is drawn floating beside the wrong arm, so the mod turns a misplaced draw into no draw.
+
+**Proposed fix.** Make the Accessories split-arm routing follow handedness for the renderers whose arms this mod filters. In both `slotIndexBelongsToPart` wrappers of `RagdollHeadwearRoutingMixin`, when the slot is `hand` or `ring`, the part is an arm part, and the stack resolves to an Artifacts glove renderer or a Cataclysm claw/glove renderer, return `part == armPart(index % 2 == 0 ? entity.getMainArm() : entity.getMainArm().getOpposite())` instead of Sable's fixed parity. For right-handed owners and for the doll entity (always right-handed) this equals Sable's routing. Separately, `RagdollAccessoryDrawScope` records an Accessories draw as completed even when its only arm draw was cancelled; recording only after a non-cancelled draw would make the ledger match its contract (harmless today).
+
+**How to test.** Unit: feed the routing helper a fake entity with main arm LEFT and RIGHT, slots `hand`/`ring`, indexes 0–3 and each part; right-handed results must equal Sable's parity and left-handed results must swap the arm parts for glove stacks only. In game: the scenario above, then repeat with the gloves equipped before ragdolling, both handednesses, offline and as a corpse; each glove must appear exactly once.
+
+**Verification status.** One verifier established the narrow case (confidence 0.7); the other refuted the broad claim and did not examine mid-ragdoll equips. I confirmed the "Accessories-only live re-sync" link from bytecode. Unverified: whether a player can actually change accessories while ragdolled in game. Also note `testmod`'s `RagdollClawProbe` reflects an older `renderFromStored` signature and does not exercise 0.8.1's routing.
 
 ---
 
