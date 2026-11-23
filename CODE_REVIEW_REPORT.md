@@ -7,7 +7,7 @@
 | Target | Minecraft 1.21.1, NeoForge 21.1.264, Java 21 |
 | Review date | 2026-11-23 |
 | Purpose of this document | Findings and proposed fixes, written so a second reviewer can verify and test each one independently |
-| Status | **Draft.** Two final verification passes are still running. One disputed claim (Artifacts gloves on a left-handed player's ragdoll) is deliberately left out until its re-check finishes |
+| Status | Final |
 
 No code was changed. Every finding below is a proposal.
 
@@ -15,11 +15,12 @@ No code was changed. Every finding below is a proposal.
 
 ## 1. How to read this report
 
-**What was done.** Three rounds of review by independent reviewers, each followed by an adversarial pass whose only job was to refute the findings:
+**What was done.** Several rounds of review by independent reviewers, with an adversarial pass after each discovery round whose only job was to refute the findings:
 
 1. Sixteen subsystem and cross-cutting reviews of `src/main`, checked against the real bytecode of the documented versions of every target mod (36 reference jars downloaded from Modrinth, inspected with `javap` only, never executed).
 2. A cross-version sweep: every mixin target and every directly linked third-party member was checked against other released 1.21.1 NeoForge versions of each target mod (172 mod-version combinations).
 3. A second discovery round with different lenses: fuzzing the pure maths against the compiled classes, state-machine enumeration of the elevator code, mixin-versus-mixin interplay across about 1,900 third-party mixin classes, unusual players and inputs, independent second reads, the test harness and the dev scripts.
+4. Two closing passes: one settled, from Sable and Create bytecode, the assumptions the elevator findings rested on; the other mapped which production files had been read in substance and deep-read the thinly covered ones.
 
 The project was compiled in a scratch copy against the real jars; **210 unit tests ran, 209 passed, 1 was skipped** (`EntityCullingTickContractTest.previous1113TickCallbackStillHasExactlyOneMatchingRequiredInvocation`, because the optional Entity Culling 1.11.3 fixture jar was absent).
 
@@ -46,14 +47,15 @@ The real problems are:
 | ID | Severity | Finding | Status |
 |---|---|---|---|
 | P-01 | High | No minimum-version checks for optional mods: seven mods have older, still-installable versions that crash the game | Confirmed against the jars |
-| P-02 | Medium | Holding jump in a moving Sable-mounted elevator: every hop after the first reuses the first hop's decayed velocity | Confirmed by two independent verifiers |
-| P-03 | Medium | Landing on a cabin other than the launch cabin applies the ship's motion twice | Confirmed by two independent verifiers |
+| P-02 | Medium | Holding jump in a moving Sable-mounted elevator: every hop after the first reuses the first hop's decayed velocity | Confirmed by two independent verifiers; assumptions settled from bytecode |
+| P-03 | Medium | Landing on a cabin other than the launch cabin applies the ship's motion twice, and keeps doing so | Confirmed by two independent verifiers; assumptions settled from bytecode |
 | P-04 | Medium (niche) | Spectating a player in first person with FirstPerson: the spectated player's helmet is no longer hidden | Confirmed by one verifier and by reading the code |
 | P-05 | Low | Pausing singleplayer during a deck-to-cabin jump drops the launch record, so the landing double-carries | Confirmed |
 | P-06 | Low | Not Enough Animations smoothing can replace the first-person bow/crossbow correction under shader shadows when EMF is not animating the player | Partly confirmed (narrower than first reported) |
 | P-07 | Low (latent) | `missingCarry` does not discount an active airborne release | Code gap confirmed; no in-game trigger demonstrated |
 | P-08 | Low | Reduced-tick version gate admits pre-release builds (`2.0.7-beta`, `1.12.3-beta`) | Confirmed by running the comparator |
 | P-09 | Low | Left-handed player: an Artifacts or Cataclysm glove equipped *after* the ragdoll formed is not drawn | Narrowed from a broader claim that was refuted; key link confirmed in bytecode |
+| P-10 | Low | On a slippery cabin floor (ice) the double-carry handoff fixes never engage | One reviewer; both key links confirmed by me in code and bytecode |
 
 Section 4 lists hardening notes that are not bugs today. Section 5 lists 24 defects in the test harness and dev scripts, several of which can produce a false "verified" record. Section 6 lists what was checked and found sound, and what was refuted.
 
@@ -145,6 +147,8 @@ I ran the proposed bounds through the same comparator the loader uses (`DefaultA
 
 So every hop after the first is driven by the first hop's velocity, still decaying by Sable's 0.99 per tick, while the cabin keeps its full speed.
 
+**Conditions.** The rider must be untracked by Sable, which holds whenever the rider's footprint and the one cell layer below it contain only contraption cells (any cabin interior away from a flush deck seam or a ship wall; contraption blocks are invisible to Sable's and vanilla's collision passes). The cabin must be vertically stationary, descending, or rising slower than about 0.38 blocks/tick (about 97 RPM on the pulley); a faster-rising floor catches the jumper on the jump tick and largely cancels the hop.
+
 **Failure scenario.** A Sable ship carries a Create elevator cabin at about 0.83 blocks/tick (the roughly 999 blocks/min fixture in TESTING.md). The rider stands in the cabin and holds Space. A per-tick numeric model in which every rule cites the line it models gives:
 
 | | Hop 1 | Hop 2 | Hop 3 | Hop 4 |
@@ -181,7 +185,7 @@ Do **not** apply only "always consume the release on landing": without re-regist
 - *Unit.* Extract the contact / overlap / launch decisions into a pure state machine (inputs per tick: jumping, onGround, vertical speed, inherited velocity, contact registered, carrier step). Drive it with launch, 11 airborne ticks, a landing with jumping still true, then a re-jump. Assert that the re-jump seeds the current step (0.832), not `0.832 × 0.99^12 ≈ 0.7375`. Add a control with jumping false at landing (passes today), a case where contact on the rising launch tick must not relaunch, and a case where a failed launch validation keeps the old release.
 - *In game.* Use the powered-elevator fixture from TESTING.md with the carrier moving and the cabin parked. Stand at the cabin centre, hold jump for 60 ticks. Log each tick: the rider's cabin-local X, `sable$getInheritedVelocity().x`, `onGround`, and `airborneCarry.motion` at each launch. Before the fix the inherited velocity at each re-jump reads about 0.74, 0.65, 0.58 and the local X falls back hop by hop. After the fix every launch reads about 0.83 and the loss per hop stays at the hop-1 value.
 
-**Verification status.** Confirmed independently by a code-trace verifier and by a quantitative verifier (confidence 0.8 each); vanilla and Create links were checked in bytecode and the Minecraft sources. Not run in game. One link remains an assumption shared with the mod's own code: that Sable does not track the rider while they stand on the Create cabin floor (if Sable tracks them, line 141 drops the release and the native-launch path is used instead).
+**Verification status.** Confirmed independently by a code-trace verifier and by a quantitative verifier (confidence 0.8 each). A closing pass then settled the remaining assumptions from Sable 2.0.6 and Create 6.0.10 bytecode: the rider is untracked under the condition above, Sable's drag on a contraption-only floor is always 0.99 (never 0.7, because neither vanilla nor Sable sees the contraption as ground at the time the drag is read), Create's contact motion contains the full carrier displacement for the tick, and the held key re-jumps on the tick after landing. Not run in game.
 
 ---
 
@@ -196,7 +200,9 @@ Two cases:
 - **(a) Cabin A to cabin B on the same ship.** This one is caused by the mod's own state. The `AirborneCarry` is keyed to A; `contact()` only clears its `landingCarrier` (lines 59–61) and keeps it alive. While it lives, `beforeTravel` returns at line 152, which also blocks proper launches from B.
 - **(b) Jump from the plain deck into a cabin**, staying airborne long enough for Sable to stop tracking. This is an upstream Sable + Create gap that the mod does not cover; the documentation only promises the same-cabin return. It is listed because the README states that boarding happens "without applying the ship's movement twice".
 
-**Failure scenario.** Ship at about 0.83 blocks/tick. The rider jumps from cabin A, or from the deck at least a block away from the cabin, and lands in the middle of a cabin. From the landing tick on, the rider moves by Create's carry plus Sable's leftover velocity: about 1.6 blocks per tick against the cabin's 0.83. The rider slides forward at roughly ship speed relative to the cabin until the front wall stops them or they leave through an open side. The total excess is about 2.5 blocks if Sable's ground drag (0.7 × 0.99) applies, and wall-limited if only the 0.99 airborne drag applies.
+**Failure scenario.** Ship at about 0.83 blocks/tick. The rider jumps from cabin A, or from the deck without touching the cabin at takeoff, and lands with their whole footprint on a cabin floor. From the landing tick on, the rider moves by Create's carry plus Sable's leftover velocity: about 1.6 blocks per tick against the cabin's 0.83. Sable's drag on a contraption-only floor is 0.99 per tick, so the leftover velocity barely decays: about 7.9 blocks of excess over the first 10 ticks, and it only reaches Sable's cut-off after roughly 780 ticks. In an open cabin the rider is carried off the leading edge within a few ticks. In a closed cabin the rider is pressed against the front wall for many seconds instead of settling.
+
+It does not happen at a flush deck/cabin seam where the rider's box still overlaps a ship block on landing, because Sable then keeps tracking the rider and the existing handoff path removes the overlap.
 
 **Proposed fix.** In `removeOverlappingCarrierMotion`:
 
@@ -233,7 +239,7 @@ Two cases:
 - *Unit.* Extract the overlap arithmetic into a package-private pure method and assert: inherited (0.7755, 0) with step and movement (0.832, 0) gives about 0.932; zero inherited gives 0; inherited opposite to the step gives 0; inherited larger than the step clamps to 1; movement already reduced to (0.4, 0) gives about 0.48.
 - *In game.* (a) Two elevator cabins about 3 blocks apart on one moving ship; jump from A into B. (b) Stand on the deck 2 blocks from a cabin and jump in. For 30–40 ticks after touchdown log `Sable.HELPER.getTrackingSubLevel(player)` (expect null at landing), `sable$getInheritedVelocity`, the contact motion before and after the hook, and the rider's cabin-local position. Before the fix the local position advances about 0.8 blocks per tick; after it, the first grounded tick consumes the velocity and the rider stays put. In (a) also check that `airborneCarry` no longer points at A afterwards.
 
-**Verification status.** Confirmed by two independent verifiers (confidence 0.65 and 0.72). Unverified links: whether the rider is actually untracked at touchdown in common builds (it depends on whether ship blocks lie within Sable's detection range of the landing spot), and which drag factor applies on the cabin floor. Not run in game.
+**Verification status.** Confirmed by two independent verifiers (confidence 0.65 and 0.72). A closing pass settled the two open links from bytecode: a deck jump loses Sable tracking on its fourth tick and regains it only if the landing box overlaps a ship block, and the drag factor on the cabin floor is 0.99. That pass corrected the original size estimate upward (the first write-ups assumed the 0.7 ground drag might apply). Not run in game.
 
 ---
 
@@ -265,7 +271,7 @@ Two cases:
 
 **How to test.** Unit: call `observe` twice with the same tick count and valid data; the second call must not invalidate the record. In game: read `nativeLaunch` by reflection before and after a mid-jump pause; without the fix it becomes null on the first paused tick.
 
-**Verification status.** Confirmed by one verifier from the Minecraft sources and Create bytecode (confidence 0.8).
+**Verification status.** Confirmed by one verifier from the Minecraft sources and Create bytecode (confidence 0.8), and the premise was re-confirmed by the closing pass: Create's collision pass runs on paused singleplayer ticks while the player, the cabin and Sable's poses are all frozen. That pass also noted, as an inference about upstream behaviour and not a defect of this mod, that Create recomputes a non-zero contact motion from the frozen poses during a pause, so a rider touching a moving cabin may be shifted while paused.
 
 ---
 
@@ -291,7 +297,7 @@ Two cases:
 
 **What is wrong.** In the supported, floor-found branch the only discount applied to the carrier step is `nativeCarry`, taken from Sable's tracked `collision.inheritedMotion`. If an `AirborneCarry` is alive whose velocity Sable already applied in this tick's travel, that displacement is not subtracted, so the rider would move by roughly the release plus a full carrier step. `removeOverlappingCarrierMotion` handles the equivalent case for native contact; `missingCarry` checks `airborneCarry` only in the no-floor branch (lines 287–288).
 
-**Reachability.** The originally reported trigger (a fast-rising floor) was refuted. One verifier found a possible trigger, a one-tick jump tap that hits the cabin ceiling or a wall on the press tick; the other could not establish any in-game sequence. Treat this as a code gap to close, not a demonstrated bug.
+**Reachability.** The originally reported trigger (a fast-rising floor) was refuted. The closing pass narrowed what would be needed: a live release that survives only a few ticks (about six at a cabin rise of 0.5 blocks/tick), a missed Create contact inside that window, and a floor still within reach of the probe. Cabin kinematics alone cannot produce the missed contact; it needs the carrier itself to drop the floor in world space (a ship sinking or pitching faster than about 0.08 blocks/tick, or a downward pose correction). Treat this as a code gap to close, not a demonstrated bug.
 
 **Proposed fix.** In that branch, when `airborneCarry` belongs to this player and `airborneCarry.tick == player.tickCount`, subtract its overlap with `movement` the same way lines 261–264 do for `nativeCarry`.
 
@@ -333,6 +339,22 @@ Two cases:
 
 ---
 
+### P-10 (Low) — On a slippery cabin floor the double-carry handoff fixes never engage
+
+**Where.** `SableElevatorRiderCarry.java` line 86 (`|| !player.onGround()`) and line 105 (`... && player.onGround() && ...`).
+
+**What is wrong.** Every place where the mod consumes Sable's already-applied velocity requires `player.onGround()`. On a Create contraption the only thing that sets `onGround` is Create itself, and it does so only for walkable blocks: in Create 6.0.10 `ContraptionCollider.collideEntities` computes `slide = max(0, friction − 0.6)` (offsets 930–940) and calls `setOnGround(true)` only when `bounce != 0 || slide == 0` (offsets 1669–1711). Ice and packed ice have friction 0.98 and blue ice 0.989, so on those floors `onGround` stays false, while Create still registers the contact and applies its full contact motion. The mod subtracts the overlap for the one tick in which Sable carried the rider, but never consumes the inherited velocity, so from the next tick on the rider gets Create's full carry plus Sable's leftover velocity. That is the "second pulse" the 1.2.19 handoff change was written to remove.
+
+**Failure scenario.** A Create elevator cabin with a packed-ice floor on a moving Sable ship. The rider walks from the tracked deck into the cabin (or lands in it from a deck jump). After the handoff the rider surges forward at about twice the ship's speed until they hit the front wall or leave the cabin. On an ordinary floor the same walk-on is handled correctly. A jump cannot start from such a floor (vanilla needs `onGround`), so only walk-on and landing paths are affected.
+
+**Proposed fix.** Treat a registered Create floor contact as ground for the mod's own decisions. Record `floorContactTick = player.tickCount` in `contact()` (it runs at `registerColliding`, before Create's `setOnGround`), before the `canRide` early return, and replace `player.onGround()` at lines 86 and 105 with `(player.onGround() || floorContactTick == player.tickCount)`. Use the same condition in the fallback proposed in P-03. Alternatively, document slippery cabin floors as unsupported.
+
+**How to test.** In the moving-board fixture from TESTING.md, replace the cabin floor with packed ice and walk in from the tracked landing. Log the rider's per-tick world step and `sable$getInheritedVelocity`. Before the fix the inherited velocity stays near the ship's speed after the handoff and the step is about twice the carrier step; after it, the velocity is consumed on the first untracked contact tick. A unit test can drive `removeOverlappingCarrierMotion` with `onGround` false and the contact flag set.
+
+**Verification status.** Reported by one reviewer (confidence 0.5). I confirmed both key links myself: the two `onGround()` conditions in this mod, and the walkable-block rule in Create's bytecode together with the vanilla friction values. The size of the effect was not observed in game, and an ice-floored cabin is an unusual build.
+
+---
+
 ## 4. Hardening notes (not bugs with any version that exists today)
 
 These were raised as findings and then downgraded after checking real versions.
@@ -342,6 +364,7 @@ These were raised as findings and then downgraded after checking real versions.
 | Unbounded upper versions on MixinSquared and internal targets | `SableSleepingRotationMixin` / `SableSleepingNameTagMixin` (gate: Sable present, line 93–96), `SablePlayerEntityCullingMixin` (line 75–76), `FirstPersonPoseInterpolatorMixin` (`require = 8`, line 156–159) and the five `SableFresh*` mixins have no upper version bound. **Checked:** the sleeping handlers match on every Sable release from 1.0.4 to 2.0.6, the culling handler on Entity Culling 1.7.4 to 1.12.2, the interpolator on EMF Compat Core 1.0.0 to 2.4.0, and the Fresh targets on EMF 2.4.1 to 3.3.12 (the latest). A future release that renames one of these would crash at startup | Optional: pin upper bounds the way the elevator and reduced-tick gates do, or relax `require` with a logged fallback for the cosmetic ones |
 | `InvisiblePlayerLayerPoseMixin` applies only on EMF exactly 3.3.12 | `neoforge.mods.toml` allows `[3.3.12,)`, so the invisible-player pose fix will silently disappear on the next EMF release | Decide whether to widen the gate after checking the next EMF version; add a log line when the gate is skipped |
 | Core 2.4+ assumed to own Sable deck height even if Core's own correction failed | `compat/EmfSableCompatibility.java:11-33`. Core 2.4.0 turns its correction off silently when its reflection into Sable fails. Not reachable with Sable 2.0.6; it would need a future Sable that renames the reflected members, and this mod cannot observe Core's failure flag through a public API | None required now |
+| Config list entries are validated as lowercase only | `config/CompatConfig.java` validators accept `[a-z0-9_.:/-]`, while `AccessoryVisibilityPolicy` compares case-insensitively. A hand-edited `hiddenSlots = ["Hat"]` is dropped by NeoForge's config correction, and a list that ends up empty resets to its default | Optional: accept any case in the validator, or say "lowercase" in the config comment |
 | Friends&Foes totem transform leaks into later curios | Upstream: Curios 9.5.1 pushes/pops once around all curios and Friends&Foes' totem renderer has no push/pop. `FriendsAndFoesTotemMixin` changes only the crouch part of a transform that already escapes; it adds no new leak | Optional containment: wrap the totem render in `pushPose()/popPose()` with `@WrapMethod` |
 
 ---
@@ -361,7 +384,7 @@ All are low severity except T-06, which can hide a real rendering regression fro
 | T-05 | `test/AttachmentTestMod.java:393-409` | In the renderer sweep, a screenshot or report failure sets `complete = true`; closing the screen then writes `"finished": true` over truncated results, and `scripts/summarize_tests.py` copies that flag through | Track `aborted` separately and write `finished = finished && !aborted` |
 | T-06 | `test/ExpandedSequentialAbilitySequence.java:1353` (also 275, 1278–1280, 1358–1371), read by `scripts/reconcile_final_native_outcomes.py:86` | `complete()` writes the row's status and `rendererViolations` once, then most cases continue into an EXPIRE or STORM_DRAIN phase in which `frame()` keeps counting violations (up to about 1,800 ticks for Tempest). Nothing writes the later count back and `next()` resets it, so the row keeps PASS with 0 violations and the release reconciler reads that 0. A regression that only shows while the weapon is held after its ability fires is not recorded | In `next()`, before the reset, compare the count with its value at `complete()`; if it grew, update `rendererViolations` and set the row to RENDER_FAILURE |
 | T-07 | `test/ExpandedEquipmentSequence.java:325-338` | Same pattern as T-05 in a second sweep screen: a screenshot or report failure sets `complete = true` and closing the screen writes `finished: true` | Same fix as T-05 |
-| T-08 | `test/NeaProjectileLifecycleSequence.java:156` | `bodyExpected = !firstPerson || CombatRenderCounters.bodyPasses > 0`, and that counter only increments when production's `isLocalBody` is true, which is the same predicate the bow fix uses. If `isLocalBody` stops matching, the fix turns off and the first-person bow assertions are skipped together | Derive the expectation from harness state (first person and FirstPerson enabled) and require exactly one body pass |
+| T-08 | `test/NeaProjectileLifecycleSequence.java:156` | `bodyExpected = !firstPerson \|\| CombatRenderCounters.bodyPasses > 0`, and that counter only increments when production's `isLocalBody` is true, which is the same predicate the bow fix uses. If `isLocalBody` stops matching, the fix turns off and the first-person bow assertions are skipped together | Derive the expectation from harness state (first person and FirstPerson enabled) and require exactly one body pass |
 | T-09 | `test/OverlapCombatSequence.java:193-215` | `hookFrames` is session-wide and never reset per case. A case that never enters owned combat rendering adds no failures, and the run still ends CAPTURED if any other case had one hook frame | Count owned and hook frames per case and fail a case that has none |
 | T-10 | `test/LiveFirstPersonSequence.java:103-105, 206`, `scripts/summarize_tests.py:128-138` | The embedded `FirstPersonProbe` result is stored but never read. The sequence ends CAPTURED even when the probe status is FAIL, and the summary drops the probe status | Downgrade to FAIL when the probe did not pass; carry the probe status into the summary |
 | T-11 | `test/GlErrorTraceProbe.java:136-183` | Reports CAPTURED / NO_MATCHING_ERROR_OBSERVED even when GL debug output was never enabled (`glDebugVerbosity` 0 or no debug extension), in which case it cannot observe any error | Record whether the debug callback is installed and report NOT_OBSERVABLE otherwise |
@@ -395,7 +418,10 @@ All are low severity except T-06, which can hide a real rendering regression fro
 
 ## 6. Checked and found sound, and refuted claims
 
-**Refuted.** "Aether gloves are drawn on an invisible local player during PlayerAnimator first-person attacks" (`client/AetherNativeAttackGloves.java`). The adversarial verifier showed this matches what the native Accessories layer and held-item layer do for invisible players (vanilla shows equipment on invisible players in a third-person model pass). Not a defect.
+**Refuted.**
+
+- "Aether gloves are drawn on an invisible local player during PlayerAnimator first-person attacks" (`client/AetherNativeAttackGloves.java`). The adversarial verifier showed this matches what the native Accessories layer and held-item layer do for invisible players (vanilla shows equipment on invisible players in a third-person model pass). Not a defect.
+- "A left-handed player's Artifacts gloves vanish on a ragdoll in an Accessories-only setup." The mixins involved are not applied in that setup, and where they are applied each glove is drawn once on the correct arm. Only the narrow case in P-09 remains.
 
 **Found sound** (each item was checked against bytecode of the documented versions unless stated):
 
@@ -405,7 +431,9 @@ All are low severity except T-06, which can hide a real rendering regression fro
 - Reduced ticks: the ASM linker matches Sable 2.0.6, every failure path leaves full ticks, and the order of Sable's callbacks before `aiStep` matches a full tick on Entity Culling 1.12.0 to 1.12.2.
 - First-person arm masks, handedness and slot parity; crossbow and gun pose maths against vanilla, NEA and Iron's code; Better Combat fade and speed-modifier weights against PlayerAnimator.
 - Every scope, mask and ThreadLocal is restored in `finally` or try-with-resources, including when another mod cancels or throws.
-- Config: all 18 options are read, none inverted, defaults inside their ranges, all translation keys present.
+- Config: all 18 options are read, none inverted, defaults inside their ranges, all translation keys present. The client config is loaded before any tick, reload or render that reads it.
+- Dedicated server: only the two common Tidal mixins are considered there, and they and the plugin reference no client-only class. The `emfattachments.disable`, `emfattachments.aetherParallelCapeLookup` and `emfattachments.sableFullTicks` switches behave as documented.
+- The reflective `MethodHandle` calls into Sable Player Ragdoll's private helpers match the 0.8.1 signatures exactly; ragdoll headwear routing judges the same stack Sable draws.
 - Mixin interplay: no hard conflict with any mixin of the 45 reference jars on the methods this mod injects into.
 - Fuzzing against the compiled classes: `SableElevatorFootprint.topHeight` (230,000 cases including overturned and far-coordinate boxes), `landingCorrection` (200,000 descents plus NaN/infinity inputs), a model of `SableElevatorReleaseMotion.sample` (200,000 cases), and the version gates. No violation.
 
@@ -413,7 +441,8 @@ All are low severity except T-06, which can hide a real rendering regression fro
 
 ## 7. Coverage and limits
 
-- **No in-game execution.** Every scenario above still needs a live reproduction. The elevator findings in particular rest on how Sable tracks a rider standing on a Create contraption, which was not observed at runtime.
+- **No in-game execution.** Every scenario above still needs a live reproduction. The elevator findings rest on how Sable tracks a rider standing on a Create contraption; that was established from bytecode, not observed at runtime.
+- **Production coverage.** Every file under `src/main` was read by at least two reviewers, and a closing pass deep-read the files that earlier notes had not discussed in substance. Two things remain assumptions because they need a running game: reflective `setAccessible` across mod modules, and weaving with the exact Mixin build NeoForge ships (the checks used the same 0.8.7 family).
 - **Reference versions.** Mixin targets were validated against the versions the repository documents (Sable 2.0.6, Create 6.0.10, Entity Culling 1.12.0–1.12.2, FirstPerson 2.7.3, EMF 3.3.12, ETF 7.2.6, EMF Compat Core 2.4.0, Accessories 1.1.0-beta.54, Curios 9.5.1, and so on), plus the versions listed in P-01. Where the repository documents no version, the newest 1.21.1 NeoForge release was used.
 - **Not available.** "RagRevival 1.4.0" (mentioned in TESTING.md) was not found on Modrinth. Supplementaries (targeted by one test mixin) had no reference jar. Fresh Animations' own resource-pack expressions were not available. Sodium/Embeddium fast paths were not checked.
 - **Test harness and scripts.** `src/testmod`, `src/perfmod` and `scripts/` were reviewed only for false passes, behaviour-changing probes, and damage to the developer's instance. Most files were read in full by one reviewer; a few large sequences were partly skimmed. Historical evidence-binder scripts pinned to old versions were treated as intentional.
